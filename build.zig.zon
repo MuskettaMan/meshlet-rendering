@@ -1,0 +1,16 @@
+.{
+    .name = "zig-dx12",
+    .version = "0.0.0",
+    .dependencies = .{
+        .zwindows = .{
+            .path = "libs/zwindows",
+        },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "libs"
+    },
+}
