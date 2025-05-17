@@ -37,8 +37,12 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("zd3d12", zd3d12_module);
     exe.root_module.addImport("zxaudio2", zxaudio2_module);
 
+    const zgui = b.dependency("zgui", .{ .target = target, .backend = .win32_dx12 });
+    exe.root_module.addImport("zgui", zgui.module("root"));
+    exe.linkLibrary(zgui.artifact("imgui"));
+
     const compile_shaders = @import("zwindows").addCompileShaders(b, "Main", zwindows_dependency, .{ .shader_ver = "6_5" });
-    const root_path = pathResolve(b, &.{ @src().file, ".."});
+    const root_path = pathResolve(b, &.{ @src().file, ".." });
 
     const hlsl_path = b.pathJoin(&.{ root_path, "src", "shaders", "main.hlsl" });
     compile_shaders.addVsShader(hlsl_path, "vsMain", b.pathJoin(&.{ root_path, "src", "shaders", "main.vs.cso" }), "");
@@ -52,6 +56,14 @@ pub fn build(b: *std.Build) void {
     zwindows.install_directml(&exe.step, zwindows_dependency, .bin);
 
     exe.rdynamic = true;
+
+    const install_content = b.addInstallDirectory(.{
+        .source_dir = .{ .src_path = .{ .owner = b, .sub_path = "content" } },
+        .install_dir = .prefix,
+        .install_subdir = "bin/content",
+    });
+
+    b.getInstallStep().dependOn(&install_content.step);
 
     b.installArtifact(exe);
 

@@ -1,10 +1,14 @@
 .{
-    .name = "zig-dx12",
+    .name = .meshlet_rendering,
+    .fingerprint = 0x90ad1ddca814ca67,
     .version = "0.0.0",
     .dependencies = .{
         .zwindows = .{
             .path = "libs/zwindows",
         },
+        .zgui = .{
+            .path = "libs/zgui"
+        }
     },
 
     .paths = .{

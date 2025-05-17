@@ -1,3 +1,6 @@
 [submodule "libs/zwindows"]
 	path = libs/zwindows
 	url = https://github.com/zig-gamedev/zwindows
+[submodule "libs/zgui"]
+	path = libs/zgui
+	url = https://github.com/zig-gamedev/zgui

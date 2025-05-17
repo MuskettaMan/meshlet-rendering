@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const zgui = @import("zgui");
 const zwindows = @import("zwindows");
 const windows = zwindows.windows;
 const dxgi = zwindows.dxgi;
@@ -9,6 +10,7 @@ const hrPanicOnFail = zwindows.hrPanicOnFail;
 const Dx12State = @import("dx12_state.zig").Dx12State;
 
 const window_name = "DX12 Zig";
+const content_dir = "content/";
 
 fn processWindowMessage(window: windows.HWND, message: windows.UINT, wparam: windows.WPARAM, lparam: windows.LPARAM) callconv(windows.WINAPI) windows.LRESULT {
     switch (message) {
@@ -78,6 +80,30 @@ pub fn main() !void {
     var dx12 = Dx12State.init(window);
     defer dx12.deinit();
 
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    //defer gpa.deinit();
+
+    const allocator = gpa.allocator();
+
+    zgui.init(allocator);
+    defer zgui.deinit();
+
+    _ = zgui.io.addFontFromFile(content_dir ++ "Roboto-Medium.ttf", 16.0);
+
+    const descriptor = dx12.cbv_srv_heap.allocate();
+
+    zgui.backend.init(window, .{
+        .device = dx12.device,
+        .command_queue = dx12.command_queue,
+        .num_frames_in_flight = Dx12State.num_frames,
+        .rtv_format = @intFromEnum(Dx12State.rtv_format),
+        .dsv_format = @intFromEnum(Dx12State.dsv_format),
+        .cbv_srv_heap = dx12.cbv_srv_heap.heap,
+        .font_srv_cpu_desc_handle = @bitCast(descriptor.cpu_handle),
+        .font_srv_gpu_desc_handle = @bitCast(descriptor.gpu_handle),
+    });
+    defer zgui.backend.deinit();
+
     const root_signature: *d3d12.IRootSignature, const pipeline: *d3d12.IPipelineState = blk: {
         const vs_cso = @embedFile("./shaders/main.vs.cso");
         const ps_cso = @embedFile("./shaders/main.ps.cso");
@@ -110,6 +136,7 @@ pub fn main() !void {
     main_loop: while (true) {
         {
             var message = std.mem.zeroes(windows.MSG);
+
             while (windows.PeekMessageA(&message, null, 0, 0, windows.PM_REMOVE) == windows.TRUE) {
                 _ = windows.TranslateMessage(&message);
                 _ = windows.DispatchMessageA(&message);
@@ -181,6 +208,10 @@ pub fn main() !void {
         dx12.command_list.OMSetRenderTargets(1, &.{back_buffer_descriptor}, windows.TRUE, null);
         dx12.command_list.ClearRenderTargetView(back_buffer_descriptor, &.{ 0.2, frac, 0.8, 1.0 }, 0, null);
 
+        zgui.backend.newFrame(@intCast(window_rect.right), @intCast(window_rect.bottom));
+
+        // Draw gui.
+
         dx12.command_list.IASetPrimitiveTopology(.TRIANGLELIST);
         dx12.command_list.SetPipelineState(pipeline);
         dx12.command_list.SetGraphicsRootSignature(root_signature);
@@ -192,6 +223,10 @@ pub fn main() !void {
             .StateBefore = .{ .RENDER_TARGET = true },
             .StateAfter = d3d12.RESOURCE_STATES.PRESENT,
         } } }});
+
+        const heaps = [_]*d3d12.IDescriptorHeap{dx12.cbv_srv_heap.heap};
+        dx12.command_list.SetDescriptorHeaps(1, &heaps);
+        zgui.backend.draw(dx12.command_list);
 
         hrPanicOnFail(dx12.command_list.Close());
 

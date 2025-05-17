@@ -7,8 +7,43 @@ const d3d12 = zwindows.d3d12;
 const d3d12d = zwindows.d3d12d;
 const hrPanicOnFail = zwindows.hrPanicOnFail;
 
-const num_frames = 2;
-const debug_enabled = true;
+pub const Descriptor = struct { index: u32, cpu_handle: d3d12.CPU_DESCRIPTOR_HANDLE, gpu_handle: d3d12.GPU_DESCRIPTOR_HANDLE };
+
+pub const CbvSrvHeap = struct {
+    heap: *d3d12.IDescriptorHeap,
+    next_free_index: u32 = 0,
+    num_descriptors: u32,
+    descriptor_size: u32,
+
+    pub fn init(num_descriptors: comptime_int, device: *d3d12.IDevice9) CbvSrvHeap {
+        var heap: *d3d12.IDescriptorHeap = undefined;
+        hrPanicOnFail(device.CreateDescriptorHeap(&.{
+            .Type = .CBV_SRV_UAV,
+            .NumDescriptors = num_descriptors,
+            .Flags = .{ .SHADER_VISIBLE = true },
+            .NodeMask = 0,
+        }, &d3d12.IID_IDescriptorHeap, @ptrCast(&heap)));
+
+        return .{ .heap = heap, .num_descriptors = num_descriptors, .descriptor_size = device.GetDescriptorHandleIncrementSize(d3d12.DESCRIPTOR_HEAP_TYPE.CBV_SRV_UAV) };
+    }
+
+    pub fn deinit(self: *CbvSrvHeap) void {
+        _ = self.heap.Release();
+    }
+
+    pub fn allocate(self: *CbvSrvHeap) Descriptor {
+        const index = self.next_free_index;
+        self.next_free_index += 1;
+
+        var cpu_handle = self.heap.GetCPUDescriptorHandleForHeapStart();
+        cpu_handle.ptr += index * self.descriptor_size;
+
+        var gpu_handle = self.heap.GetGPUDescriptorHandleForHeapStart();
+        gpu_handle.ptr += index * self.descriptor_size;
+
+        return .{ .index = index, .cpu_handle = cpu_handle, .gpu_handle = gpu_handle };
+    }
+};
 
 pub const Dx12State = struct {
     dxgi_factory: *dxgi.IFactory6,
@@ -20,6 +55,8 @@ pub const Dx12State = struct {
     rtv_heap: *d3d12.IDescriptorHeap,
     rtv_heap_start: d3d12.CPU_DESCRIPTOR_HANDLE,
 
+    cbv_srv_heap: CbvSrvHeap,
+
     frame_fence: *d3d12.IFence,
     frame_fence_event: windows.HANDLE,
     frame_fence_counter: u64 = 0,
@@ -28,6 +65,11 @@ pub const Dx12State = struct {
     command_queue: *d3d12.ICommandQueue,
     command_allocators: [num_frames]*d3d12.ICommandAllocator,
     command_list: *d3d12.IGraphicsCommandList6,
+
+    pub const num_frames = 2;
+    pub const debug_enabled = true;
+    pub const rtv_format = dxgi.FORMAT.R8G8B8A8_UNORM;
+    pub const dsv_format = dxgi.FORMAT.D32_FLOAT;
 
     pub fn init(window: windows.HWND) Dx12State {
         var dxgi_factory: *dxgi.IFactory6 = undefined;
@@ -48,14 +90,9 @@ pub const Dx12State = struct {
         }
 
         var device: *d3d12.IDevice9 = undefined;
-        if(d3d12.CreateDevice(null, .@"11_0", &d3d12.IID_IDevice9, @ptrCast(&device)) != windows.S_OK) {
-            _ = windows.MessageBoxA(
-                window, 
-                "Failed to create Direct3D 12 Device. This applications requires graphics card " ++
-                    "with DirectX 12 Feature Level 11.0 support.", 
-                "Your graphics card driver may be old", 
-                windows.MB_OK | windows.MB_ICONERROR
-            );
+        if (d3d12.CreateDevice(null, .@"11_0", &d3d12.IID_IDevice9, @ptrCast(&device)) != windows.S_OK) {
+            _ = windows.MessageBoxA(window, "Failed to create Direct3D 12 Device. This applications requires graphics card " ++
+                "with DirectX 12 Feature Level 11.0 support.", "Your graphics card driver may be old", windows.MB_OK | windows.MB_ICONERROR);
             windows.ExitProcess(0);
         }
         std.log.info("D3D12 device created", .{});
@@ -75,23 +112,7 @@ pub const Dx12State = struct {
 
         var swap_chain: *dxgi.ISwapChain3 = undefined;
         {
-            var desc = dxgi.SWAP_CHAIN_DESC {
-                .BufferDesc = .{
-                    .Width = @intCast(rect.right),
-                    .Height = @intCast(rect.bottom),
-                    .RefreshRate = .{ .Numerator = 0, .Denominator = 0 },
-                    .Format = .R8G8B8A8_UNORM,
-                    .ScanlineOrdering = .UNSPECIFIED,
-                    .Scaling = .UNSPECIFIED
-                },
-                .SampleDesc = .{ .Count = 1, .Quality = 0 },
-                .BufferUsage = .{ .RENDER_TARGET_OUTPUT = true },
-                .BufferCount = num_frames,
-                .OutputWindow = window,
-                .Windowed = windows.TRUE,
-                .SwapEffect = .FLIP_DISCARD,
-                .Flags = .{} 
-            };
+            var desc = dxgi.SWAP_CHAIN_DESC{ .BufferDesc = .{ .Width = @intCast(rect.right), .Height = @intCast(rect.bottom), .RefreshRate = .{ .Numerator = 0, .Denominator = 0 }, .Format = rtv_format, .ScanlineOrdering = .UNSPECIFIED, .Scaling = .UNSPECIFIED }, .SampleDesc = .{ .Count = 1, .Quality = 0 }, .BufferUsage = .{ .RENDER_TARGET_OUTPUT = true }, .BufferCount = num_frames, .OutputWindow = window, .Windowed = windows.TRUE, .SwapEffect = .FLIP_DISCARD, .Flags = .{} };
             var temp_swap_chain: *dxgi.ISwapChain = undefined;
             hrPanicOnFail(dxgi_factory.CreateSwapChain(@ptrCast(command_queue), &desc, @ptrCast(&temp_swap_chain)));
 
@@ -104,7 +125,7 @@ pub const Dx12State = struct {
 
         var swap_chain_textures: [num_frames]*d3d12.IResource = undefined;
 
-        for(&swap_chain_textures , 0..) |*texture, i| {
+        for (&swap_chain_textures, 0..) |*texture, i| {
             hrPanicOnFail(swap_chain.GetBuffer(@intCast(i), &d3d12.IID_IResource, @ptrCast(&texture.*)));
         }
 
@@ -120,7 +141,9 @@ pub const Dx12State = struct {
 
         const rtv_heap_start = rtv_heap.GetCPUDescriptorHandleForHeapStart();
 
-        for(swap_chain_textures, 0..) |texture, i| {
+        const cbv_srv_heap: CbvSrvHeap = CbvSrvHeap.init(16, device);
+
+        for (swap_chain_textures, 0..) |texture, i| {
             device.CreateRenderTargetView(texture, null, .{ .ptr = rtv_heap_start.ptr + i * device.GetDescriptorHandleIncrementSize(.RTV) });
         }
 
@@ -135,7 +158,7 @@ pub const Dx12State = struct {
 
         var command_allocators: [num_frames]*d3d12.ICommandAllocator = undefined;
 
-        for(&command_allocators) |*cmdAlloc| {
+        for (&command_allocators) |*cmdAlloc| {
             hrPanicOnFail(device.CreateCommandAllocator(.DIRECT, &d3d12.IID_ICommandAllocator, @ptrCast(&cmdAlloc.*)));
         }
 
@@ -153,6 +176,7 @@ pub const Dx12State = struct {
             .swap_chain_textures = swap_chain_textures,
             .rtv_heap = rtv_heap,
             .rtv_heap_start = rtv_heap_start,
+            .cbv_srv_heap = cbv_srv_heap,
             .frame_fence = frame_fence,
             .frame_fence_event = frame_fence_event,
             .command_allocators = command_allocators,
@@ -162,15 +186,16 @@ pub const Dx12State = struct {
 
     pub fn deinit(dx12: *Dx12State) void {
         _ = dx12.command_list.Release();
-        for(dx12.command_allocators) |commandAlloc| _ = commandAlloc.Release();
+        for (dx12.command_allocators) |commandAlloc| _ = commandAlloc.Release();
         _ = dx12.frame_fence.Release();
         _ = windows.CloseHandle(dx12.frame_fence_event);
         _ = dx12.rtv_heap.Release();
-        for(dx12.swap_chain_textures) |swap_chain_texture| _ = swap_chain_texture.Release();
+        for (dx12.swap_chain_textures) |swap_chain_texture| _ = swap_chain_texture.Release();
         _ = dx12.swap_chain.Release();
         _ = dx12.command_queue.Release();
         _ = dx12.device.Release();
         _ = dx12.dxgi_factory.Release();
+        dx12.cbv_srv_heap.deinit();
         dx12.* = undefined;
     }
 
@@ -179,9 +204,9 @@ pub const Dx12State = struct {
 
         hrPanicOnFail(dx12.swap_chain.Present(1, .{}));
         hrPanicOnFail(dx12.command_queue.Signal(dx12.frame_fence, dx12.frame_fence_counter));
-    
+
         const gpu_frame_counter = dx12.frame_fence.GetCompletedValue();
-        if((dx12.frame_fence_counter - gpu_frame_counter) >= num_frames) {
+        if ((dx12.frame_fence_counter - gpu_frame_counter) >= num_frames) {
             hrPanicOnFail(dx12.frame_fence.SetEventOnCompletion(gpu_frame_counter + 1, dx12.frame_fence_event));
             windows.WaitForSingleObject(dx12.frame_fence_event, windows.INFINITE) catch {};
         }
