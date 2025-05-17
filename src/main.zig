@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const zgui = @import("zgui");
+const zmath = @import("zmath");
 const zwindows = @import("zwindows");
 const windows = zwindows.windows;
 const dxgi = zwindows.dxgi;

@@ -8,6 +8,9 @@
         },
         .zgui = .{
             .path = "libs/zgui"
+        },
+        .zmath = .{
+            .path = "libs/zmath"
         }
     },
 
