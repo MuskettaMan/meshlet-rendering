@@ -9,6 +9,7 @@ const d3d12 = zwindows.d3d12;
 const d3d12d = zwindows.d3d12d;
 const hrPanicOnFail = zwindows.hrPanicOnFail;
 const Dx12State = @import("dx12_state.zig").Dx12State;
+const Camera = @import("camera.zig").Camera;
 
 const window_name = "DX12 Zig";
 const content_dir = "content/";
@@ -91,7 +92,7 @@ pub fn main() !void {
 
     _ = zgui.io.addFontFromFile(content_dir ++ "Roboto-Medium.ttf", 16.0);
 
-    const descriptor = dx12.cbv_srv_heap.allocate();
+    const fontDescriptor = dx12.cbv_srv_heap.allocate();
 
     zgui.backend.init(window, .{
         .device = dx12.device,
@@ -100,8 +101,8 @@ pub fn main() !void {
         .rtv_format = @intFromEnum(Dx12State.rtv_format),
         .dsv_format = @intFromEnum(Dx12State.dsv_format),
         .cbv_srv_heap = dx12.cbv_srv_heap.heap,
-        .font_srv_cpu_desc_handle = @bitCast(descriptor.cpu_handle),
-        .font_srv_gpu_desc_handle = @bitCast(descriptor.gpu_handle),
+        .font_srv_cpu_desc_handle = @bitCast(fontDescriptor.cpu_handle),
+        .font_srv_gpu_desc_handle = @bitCast(fontDescriptor.gpu_handle),
     });
     defer zgui.backend.deinit();
 
@@ -127,6 +128,35 @@ pub fn main() !void {
     };
     defer _ = pipeline.Release();
     defer _ = root_signature.Release();
+
+    var width: u32 = 1600;
+    var height: u32 = 1200;
+    const aspect_ratio = @as(f32, @floatFromInt(width)) / @as(f32, @floatFromInt(height));
+
+    const model = zmath.translation(0.0, 0.0, 0.0);
+    const view = zmath.inverse(zmath.translation(0.0, 0.0, -10.0));
+    const proj = zmath.perspectiveFovLh(0.25 * std.math.pi, aspect_ratio, 0.1, 20.0);
+
+    const camera = Camera.init(zmath.mul(zmath.mul(model, view), proj));
+    const bufferSize = (@sizeOf(Camera) + 255) & ~@as(u32, 255);
+
+    var cameraResource: ?*d3d12.IResource = null;
+    const heapProps = d3d12.HEAP_PROPERTIES.initType(.UPLOAD);
+    const bufferDesc = d3d12.RESOURCE_DESC.initBuffer(bufferSize);
+
+    hrPanicOnFail(dx12.device.CreateCommittedResource(&heapProps, d3d12.HEAP_FLAGS{}, &bufferDesc, d3d12.RESOURCE_STATES.GENERIC_READ, null, &d3d12.IID_IResource, @ptrCast(&cameraResource)));
+
+    const readRange: d3d12.RANGE = .{ .Begin = 0, .End = 0 };
+    var mappedData: ?*anyopaque = null;
+    hrPanicOnFail(cameraResource.?.Map(0, &readRange, &mappedData));
+    zmath.storeMat(@as([*]f32, @ptrCast(@alignCast(mappedData.?)))[0..bufferSize], zmath.transpose(camera.mat));
+    cameraResource.?.Unmap(0, null);
+
+    const cameraDescriptor = dx12.cbv_srv_heap.allocate();
+
+    const cbvDesc: d3d12.CONSTANT_BUFFER_VIEW_DESC = .{ .BufferLocation = cameraResource.?.GetGPUVirtualAddress(), .SizeInBytes = bufferSize };
+
+    dx12.device.CreateConstantBufferView(&cbvDesc, cameraDescriptor.cpu_handle);
 
     var frac: f32 = 0.0;
     var frac_delta: f32 = 0.005;
@@ -174,6 +204,8 @@ pub fn main() !void {
             }
 
             window_rect = rect;
+            width = @intCast(window_rect.right);
+            height = @intCast(window_rect.bottom);
         }
 
         const command_allocator = dx12.command_allocators[dx12.frame_index];
@@ -184,16 +216,16 @@ pub fn main() !void {
         dx12.command_list.RSSetViewports(1, &.{.{
             .TopLeftX = 0.0,
             .TopLeftY = 0.0,
-            .Width = @floatFromInt(window_rect.right),
-            .Height = @floatFromInt(window_rect.bottom),
+            .Width = @floatFromInt(width),
+            .Height = @floatFromInt(height),
             .MinDepth = 0.0,
             .MaxDepth = 1.0,
         }});
         dx12.command_list.RSSetScissorRects(1, &.{.{
             .left = 0,
             .top = 0,
-            .right = @intCast(window_rect.right),
-            .bottom = @intCast(window_rect.bottom),
+            .right = @intCast(width),
+            .bottom = @intCast(height),
         }});
 
         const back_buffer_index = dx12.swap_chain.GetCurrentBackBufferIndex();
@@ -209,13 +241,16 @@ pub fn main() !void {
         dx12.command_list.OMSetRenderTargets(1, &.{back_buffer_descriptor}, windows.TRUE, null);
         dx12.command_list.ClearRenderTargetView(back_buffer_descriptor, &.{ 0.2, frac, 0.8, 1.0 }, 0, null);
 
-        zgui.backend.newFrame(@intCast(window_rect.right), @intCast(window_rect.bottom));
+        zgui.backend.newFrame(@intCast(width), @intCast(height));
 
         // Draw gui.
 
         dx12.command_list.IASetPrimitiveTopology(.TRIANGLELIST);
         dx12.command_list.SetPipelineState(pipeline);
         dx12.command_list.SetGraphicsRootSignature(root_signature);
+
+        dx12.command_list.SetGraphicsRootConstantBufferView(0, cameraResource.?.GetGPUVirtualAddress());
+
         dx12.command_list.DrawInstanced(3, 1, 0, 0);
 
         dx12.command_list.ResourceBarrier(1, &.{.{ .Type = .TRANSITION, .Flags = .{}, .u = .{ .Transition = .{

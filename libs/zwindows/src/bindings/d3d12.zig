@@ -111,7 +111,7 @@ pub const HEAP_PROPERTIES = extern struct {
     pub fn initType(heap_type: HEAP_TYPE) HEAP_PROPERTIES {
         var v = std.mem.zeroes(@This());
         v = HEAP_PROPERTIES{
-            .type = heap_type,
+            .Type = heap_type,
             .CPUPageProperty = .UNKNOWN,
             .MemoryPoolPreference = .UNKNOWN,
             .CreationNodeMask = 0,
