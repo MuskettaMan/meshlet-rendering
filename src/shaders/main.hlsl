@@ -1,20 +1,29 @@
 #define ROOT_SIGNATURE \
-    "RootFlags(0)," \
+    "RootFlags(ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT)," \
     "CBV(b0)"
 
 struct Camera {
     float4x4 mat;
 };
 
+struct VSInput {
+    float3 position : POSITION;
+};
+
+struct VSOutput {
+    float4 position : SV_Position;
+};
+
 ConstantBuffer<Camera> camera : register(b0);
 
 [RootSignature(ROOT_SIGNATURE)]
-void vsMain(uint vertex_id : SV_VertexID, out float4 out_position : SV_Position) {
-    const float2 verts[] = { float2(-0.9, -0.9), float2(0.0, 0.9), float2(0.9, -0.9) };
+VSOutput vsMain(VSInput input) {
+    VSOutput output;
 
-    out_position = float4(verts[vertex_id], 0.0, 1.0);
-    out_position = mul(out_position, camera.mat);
+    output.position = float4(input.position, 1.0);
+    output.position = mul(output.position, camera.mat);
 
+    return output;
 }
 
 [RootSignature(ROOT_SIGNATURE)]

@@ -14,6 +14,16 @@ const Camera = @import("camera.zig").Camera;
 const window_name = "DX12 Zig";
 const content_dir = "content/";
 
+const Vertex = struct {
+    position: zmath.Vec,
+
+    fn init(position: zmath.Vec) Vertex {
+        return .{ .position = position };
+    }
+};
+
+const vertices = [_]Vertex{ .{ .position = .{ -0.9, -0.9, 0.0, 0.0 } }, .{ .position = .{ 0.0, 0.9, 0.0, 0.0 } }, .{ .position = .{ 0.9, -0.9, 0.0, 0.0 } } };
+
 fn processWindowMessage(window: windows.HWND, message: windows.UINT, wparam: windows.WPARAM, lparam: windows.LPARAM) callconv(windows.WINAPI) windows.LRESULT {
     switch (message) {
         windows.WM_KEYDOWN => {
@@ -71,6 +81,24 @@ fn createWindow(width: u32, height: u32) windows.HWND {
     return window;
 }
 
+const Resource = struct { resource: *d3d12.IResource, bufferSize: u32, mappedData: ?*anyopaque };
+
+fn createResource(comptime T: type, device: *d3d12.IDevice9, minAligned: bool) Resource {
+    const bufferSize = if(minAligned) (@sizeOf(T) + 255) & ~@as(u32, 255) else @sizeOf(T);
+
+    var resource: ?*d3d12.IResource = null;
+    const heapProps = d3d12.HEAP_PROPERTIES.initType(.UPLOAD);
+    const bufferDesc = d3d12.RESOURCE_DESC.initBuffer(bufferSize);
+
+    hrPanicOnFail(device.CreateCommittedResource(&heapProps, d3d12.HEAP_FLAGS{}, &bufferDesc, d3d12.RESOURCE_STATES.GENERIC_READ, null, &d3d12.IID_IResource, @ptrCast(&resource)));
+
+    const readRange: d3d12.RANGE = .{ .Begin = 0, .End = 0 };
+    var mappedData: ?*anyopaque = null;
+    hrPanicOnFail(resource.?.Map(0, &readRange, &mappedData));
+
+    return .{ .resource = resource.?, .bufferSize = bufferSize, .mappedData = mappedData };
+}
+
 pub fn main() !void {
     _ = windows.CoInitializeEx(null, windows.COINIT_MULTITHREADED);
     defer windows.CoUninitialize();
@@ -110,11 +138,16 @@ pub fn main() !void {
         const vs_cso = @embedFile("./shaders/main.vs.cso");
         const ps_cso = @embedFile("./shaders/main.ps.cso");
 
+        const input_element = d3d12.INPUT_ELEMENT_DESC.init("POSITION", 0, dxgi.FORMAT.R32G32B32_FLOAT, 0, 0, .PER_VERTEX_DATA, 0);
+        const input_elements = [_]d3d12.INPUT_ELEMENT_DESC{input_element};
+        const input_layout = d3d12.INPUT_LAYOUT_DESC.init(&input_elements);
+
         var pso_desc = d3d12.GRAPHICS_PIPELINE_STATE_DESC.initDefault();
         pso_desc.DepthStencilState.DepthEnable = windows.FALSE;
         pso_desc.RTVFormats[0] = .R8G8B8A8_UNORM;
         pso_desc.NumRenderTargets = 1;
         pso_desc.PrimitiveTopologyType = .TRIANGLE;
+        pso_desc.InputLayout = input_layout;
         pso_desc.VS = .{ .pShaderBytecode = vs_cso, .BytecodeLength = vs_cso.len };
         pso_desc.PS = .{ .pShaderBytecode = ps_cso, .BytecodeLength = ps_cso.len };
 
@@ -138,25 +171,25 @@ pub fn main() !void {
     const proj = zmath.perspectiveFovLh(0.25 * std.math.pi, aspect_ratio, 0.1, 20.0);
 
     const camera = Camera.init(zmath.mul(zmath.mul(model, view), proj));
-    const bufferSize = (@sizeOf(Camera) + 255) & ~@as(u32, 255);
 
-    var cameraResource: ?*d3d12.IResource = null;
-    const heapProps = d3d12.HEAP_PROPERTIES.initType(.UPLOAD);
-    const bufferDesc = d3d12.RESOURCE_DESC.initBuffer(bufferSize);
-
-    hrPanicOnFail(dx12.device.CreateCommittedResource(&heapProps, d3d12.HEAP_FLAGS{}, &bufferDesc, d3d12.RESOURCE_STATES.GENERIC_READ, null, &d3d12.IID_IResource, @ptrCast(&cameraResource)));
-
-    const readRange: d3d12.RANGE = .{ .Begin = 0, .End = 0 };
-    var mappedData: ?*anyopaque = null;
-    hrPanicOnFail(cameraResource.?.Map(0, &readRange, &mappedData));
-    zmath.storeMat(@as([*]f32, @ptrCast(@alignCast(mappedData.?)))[0..bufferSize], zmath.transpose(camera.mat));
-    cameraResource.?.Unmap(0, null);
+    var cameraResource = createResource(Camera, dx12.device, true);
+    zmath.storeMat(@as([*]f32, @ptrCast(@alignCast(cameraResource.mappedData.?)))[0..cameraResource.bufferSize], zmath.transpose(camera.mat));
+    cameraResource.resource.Unmap(0, null);
 
     const cameraDescriptor = dx12.cbv_srv_heap.allocate();
 
-    const cbvDesc: d3d12.CONSTANT_BUFFER_VIEW_DESC = .{ .BufferLocation = cameraResource.?.GetGPUVirtualAddress(), .SizeInBytes = bufferSize };
+    const cbvDesc: d3d12.CONSTANT_BUFFER_VIEW_DESC = .{ .BufferLocation = cameraResource.resource.GetGPUVirtualAddress(), .SizeInBytes = cameraResource.bufferSize };
 
     dx12.device.CreateConstantBufferView(&cbvDesc, cameraDescriptor.cpu_handle);
+
+    const vertexBufferResource = createResource(@TypeOf(vertices), dx12.device, false);
+    const vertexBuffer: d3d12.VERTEX_BUFFER_VIEW = .{ .BufferLocation = vertexBufferResource.resource.GetGPUVirtualAddress(), .SizeInBytes = vertexBufferResource.bufferSize, .StrideInBytes = @sizeOf(f32) * 3 };
+
+    const arr: [*][3]f32 = @ptrCast(@alignCast(vertexBufferResource.mappedData.?));
+    for (vertices, 0..) |value, i| {
+        zmath.storeArr3(&arr[i], value.position);
+    }
+    vertexBufferResource.resource.Unmap(0, null);
 
     var frac: f32 = 0.0;
     var frac_delta: f32 = 0.005;
@@ -249,7 +282,8 @@ pub fn main() !void {
         dx12.command_list.SetPipelineState(pipeline);
         dx12.command_list.SetGraphicsRootSignature(root_signature);
 
-        dx12.command_list.SetGraphicsRootConstantBufferView(0, cameraResource.?.GetGPUVirtualAddress());
+        dx12.command_list.IASetVertexBuffers(0, 1, @ptrCast(&vertexBuffer));
+        dx12.command_list.SetGraphicsRootConstantBufferView(0, cameraResource.resource.GetGPUVirtualAddress());
 
         dx12.command_list.DrawInstanced(3, 1, 0, 0);
 
