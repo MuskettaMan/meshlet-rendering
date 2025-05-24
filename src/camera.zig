@@ -1,9 +1,10 @@
 const zmath = @import("zmath");
 
 pub const Camera = struct {
-    mat: zmath.Mat,
+    view: zmath.Mat,
+    proj: zmath.Mat,
 
-    pub fn init(mat: zmath.Mat) Camera {
-        return .{ .mat = mat };
+    pub fn init() Camera {
+        return .{ .view = zmath.identity(), .proj = zmath.identity() };
     }
 };

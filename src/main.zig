@@ -10,17 +10,10 @@ const d3d12d = zwindows.d3d12d;
 const hrPanicOnFail = zwindows.hrPanicOnFail;
 const Dx12State = @import("dx12_state.zig").Dx12State;
 const Camera = @import("camera.zig").Camera;
+const Vertex = @import("vertex.zig").Vertex;
 
 const window_name = "DX12 Zig";
 const content_dir = "content/";
-
-const Vertex = struct {
-    position: zmath.Vec,
-
-    fn init(position: zmath.Vec) Vertex {
-        return .{ .position = position };
-    }
-};
 
 const vertices = [_]Vertex{ .{ .position = .{ -0.9, -0.9, 0.0, 0.0 } }, .{ .position = .{ 0.0, 0.9, 0.0, 0.0 } }, .{ .position = .{ 0.9, -0.9, 0.0, 0.0 } } };
 
@@ -81,22 +74,36 @@ fn createWindow(width: u32, height: u32) windows.HWND {
     return window;
 }
 
-const Resource = struct { resource: *d3d12.IResource, bufferSize: u32, mappedData: ?*anyopaque };
+const Resource = struct {
+    resource: *d3d12.IResource,
+    buffer_size: u32,
 
-fn createResource(comptime T: type, device: *d3d12.IDevice9, minAligned: bool) Resource {
-    const bufferSize = if(minAligned) (@sizeOf(T) + 255) & ~@as(u32, 255) else @sizeOf(T);
+    pub fn map(self: *const Resource) *anyopaque {
+        const read_range: d3d12.RANGE = .{ .Begin = 0, .End = 0 };
+        var mapped_data: ?*anyopaque = null;
+        hrPanicOnFail(self.resource.Map(0, &read_range, &mapped_data));
+
+        return mapped_data.?;
+    }
+    pub fn unmap(self: *const Resource) void {
+        self.resource.Unmap(0, null);
+    }
+};
+
+fn f32Ptr(mapped_ptr: *anyopaque) [*]f32 {
+    return @as([*]f32, @ptrCast(@alignCast(mapped_ptr)));
+}
+
+fn createResource(comptime T: type, device: *d3d12.IDevice9, min_aligned: bool) Resource {
+    const buffer_size = if (min_aligned) (@sizeOf(T) + 255) & ~@as(u32, 255) else @sizeOf(T);
 
     var resource: ?*d3d12.IResource = null;
-    const heapProps = d3d12.HEAP_PROPERTIES.initType(.UPLOAD);
-    const bufferDesc = d3d12.RESOURCE_DESC.initBuffer(bufferSize);
+    const heap_props = d3d12.HEAP_PROPERTIES.initType(.UPLOAD);
+    const buffer_desc = d3d12.RESOURCE_DESC.initBuffer(buffer_size);
 
-    hrPanicOnFail(device.CreateCommittedResource(&heapProps, d3d12.HEAP_FLAGS{}, &bufferDesc, d3d12.RESOURCE_STATES.GENERIC_READ, null, &d3d12.IID_IResource, @ptrCast(&resource)));
+    hrPanicOnFail(device.CreateCommittedResource(&heap_props, d3d12.HEAP_FLAGS{}, &buffer_desc, d3d12.RESOURCE_STATES.GENERIC_READ, null, &d3d12.IID_IResource, @ptrCast(&resource)));
 
-    const readRange: d3d12.RANGE = .{ .Begin = 0, .End = 0 };
-    var mappedData: ?*anyopaque = null;
-    hrPanicOnFail(resource.?.Map(0, &readRange, &mappedData));
-
-    return .{ .resource = resource.?, .bufferSize = bufferSize, .mappedData = mappedData };
+    return .{ .resource = resource.?, .buffer_size = buffer_size };
 }
 
 pub fn main() !void {
@@ -120,7 +127,7 @@ pub fn main() !void {
 
     _ = zgui.io.addFontFromFile(content_dir ++ "Roboto-Medium.ttf", 16.0);
 
-    const fontDescriptor = dx12.cbv_srv_heap.allocate();
+    const font_descriptor = dx12.cbv_srv_heap.allocate();
 
     zgui.backend.init(window, .{
         .device = dx12.device,
@@ -129,8 +136,8 @@ pub fn main() !void {
         .rtv_format = @intFromEnum(Dx12State.rtv_format),
         .dsv_format = @intFromEnum(Dx12State.dsv_format),
         .cbv_srv_heap = dx12.cbv_srv_heap.heap,
-        .font_srv_cpu_desc_handle = @bitCast(fontDescriptor.cpu_handle),
-        .font_srv_gpu_desc_handle = @bitCast(fontDescriptor.gpu_handle),
+        .font_srv_cpu_desc_handle = @bitCast(font_descriptor.cpu_handle),
+        .font_srv_gpu_desc_handle = @bitCast(font_descriptor.gpu_handle),
     });
     defer zgui.backend.deinit();
 
@@ -166,36 +173,47 @@ pub fn main() !void {
     var height: u32 = 1200;
     const aspect_ratio = @as(f32, @floatFromInt(width)) / @as(f32, @floatFromInt(height));
 
-    const model = zmath.translation(0.0, 0.0, 0.0);
-    const view = zmath.inverse(zmath.translation(0.0, 0.0, -10.0));
-    const proj = zmath.perspectiveFovLh(0.25 * std.math.pi, aspect_ratio, 0.1, 20.0);
+    var model = zmath.identity();
 
-    const camera = Camera.init(zmath.mul(zmath.mul(model, view), proj));
+    var camera = Camera.init();
+    camera.view = zmath.inverse(zmath.translation(0.0, 0.0, -10.0));
+    camera.proj = zmath.perspectiveFovLh(0.25 * std.math.pi, aspect_ratio, 0.1, 20.0);
 
-    var cameraResource = createResource(Camera, dx12.device, true);
-    zmath.storeMat(@as([*]f32, @ptrCast(@alignCast(cameraResource.mappedData.?)))[0..cameraResource.bufferSize], zmath.transpose(camera.mat));
-    cameraResource.resource.Unmap(0, null);
+    var camera_resource = createResource(Camera, dx12.device, true);
+    const camera_ptr = camera_resource.map();
+    defer camera_resource.unmap();
+    zmath.storeMat(f32Ptr(camera_ptr)[0..16], zmath.transpose(camera.view));
+    zmath.storeMat(f32Ptr(camera_ptr)[16..32], zmath.transpose(camera.proj));
 
-    const cameraDescriptor = dx12.cbv_srv_heap.allocate();
+    var instance_resource = createResource(zmath.Mat, dx12.device, true);
+    const instance_ptr = instance_resource.map();
+    defer instance_resource.unmap();
+    zmath.storeMat(f32Ptr(instance_ptr)[0..16], model);
 
-    const cbvDesc: d3d12.CONSTANT_BUFFER_VIEW_DESC = .{ .BufferLocation = cameraResource.resource.GetGPUVirtualAddress(), .SizeInBytes = cameraResource.bufferSize };
+    const camera_descriptor = dx12.cbv_srv_heap.allocate();
+    const camera_cbv_desc: d3d12.CONSTANT_BUFFER_VIEW_DESC = .{ .BufferLocation = camera_resource.resource.GetGPUVirtualAddress(), .SizeInBytes = camera_resource.bufferSize };
+    dx12.device.CreateConstantBufferView(&camera_cbv_desc, camera_descriptor.cpu_handle);
 
-    dx12.device.CreateConstantBufferView(&cbvDesc, cameraDescriptor.cpu_handle);
+    const instance_descriptor = dx12.cbv_srv_heap.allocate();
+    const instance_cbv_desc: d3d12.CONSTANT_BUFFER_VIEW_DESC = .{ .BufferLocation = instance_resource.resource.GetGPUVirtualAddress(), .SizeInBytes = instance_resource.bufferSize };
+    dx12.device.CreateConstantBufferView(&instance_cbv_desc, instance_descriptor.cpu_handle);
 
-    const vertexBufferResource = createResource(@TypeOf(vertices), dx12.device, false);
-    const vertexBuffer: d3d12.VERTEX_BUFFER_VIEW = .{ .BufferLocation = vertexBufferResource.resource.GetGPUVirtualAddress(), .SizeInBytes = vertexBufferResource.bufferSize, .StrideInBytes = @sizeOf(f32) * 3 };
+    const vertex_buffer_resource = createResource(@TypeOf(vertices), dx12.device, false);
+    const vertex_buffer: d3d12.VERTEX_BUFFER_VIEW = .{ .BufferLocation = vertex_buffer_resource.resource.GetGPUVirtualAddress(), .SizeInBytes = vertex_buffer_resource.bufferSize, .StrideInBytes = @sizeOf(f32) * 3 };
 
-    const arr: [*][3]f32 = @ptrCast(@alignCast(vertexBufferResource.mappedData.?));
+    const vertex_ptr = vertex_buffer_resource.map();
+    const arr: [*][3]f32 = @ptrCast(f32Ptr(vertex_ptr));
     for (vertices, 0..) |value, i| {
         zmath.storeArr3(&arr[i], value.position);
     }
-    vertexBufferResource.resource.Unmap(0, null);
-
-    var frac: f32 = 0.0;
-    var frac_delta: f32 = 0.005;
+    vertex_buffer_resource.unmap();
 
     var window_rect: windows.RECT = undefined;
     _ = windows.GetClientRect(window, &window_rect);
+
+    var time = std.time.microTimestamp();
+    var delta_time_i64: i64 = 0;
+    var total_time: f32 = 0;
 
     main_loop: while (true) {
         {
@@ -241,6 +259,17 @@ pub fn main() !void {
             height = @intCast(window_rect.bottom);
         }
 
+        const current_time = std.time.microTimestamp();
+        delta_time_i64 = current_time - time;
+        time = current_time;
+
+        const delta_time: f32 = @as(f32, @floatFromInt(delta_time_i64)) / @as(f32, std.time.us_per_s);
+        total_time += delta_time;
+
+        model = zmath.rotationY(total_time);
+
+        zmath.storeMat(f32Ptr(instance_ptr)[0..16], zmath.transpose(model));
+
         const command_allocator = dx12.command_allocators[dx12.frame_index];
 
         hrPanicOnFail(command_allocator.Reset());
@@ -272,7 +301,7 @@ pub fn main() !void {
         } } }});
 
         dx12.command_list.OMSetRenderTargets(1, &.{back_buffer_descriptor}, windows.TRUE, null);
-        dx12.command_list.ClearRenderTargetView(back_buffer_descriptor, &.{ 0.2, frac, 0.8, 1.0 }, 0, null);
+        dx12.command_list.ClearRenderTargetView(back_buffer_descriptor, &.{ 0.2, 0.2, 0.8, 1.0 }, 0, null);
 
         zgui.backend.newFrame(@intCast(width), @intCast(height));
 
@@ -282,8 +311,9 @@ pub fn main() !void {
         dx12.command_list.SetPipelineState(pipeline);
         dx12.command_list.SetGraphicsRootSignature(root_signature);
 
-        dx12.command_list.IASetVertexBuffers(0, 1, @ptrCast(&vertexBuffer));
-        dx12.command_list.SetGraphicsRootConstantBufferView(0, cameraResource.resource.GetGPUVirtualAddress());
+        dx12.command_list.IASetVertexBuffers(0, 1, @ptrCast(&vertex_buffer));
+        dx12.command_list.SetGraphicsRootConstantBufferView(0, camera_resource.resource.GetGPUVirtualAddress());
+        dx12.command_list.SetGraphicsRootConstantBufferView(1, instance_resource.resource.GetGPUVirtualAddress());
 
         dx12.command_list.DrawInstanced(3, 1, 0, 0);
 
@@ -303,11 +333,6 @@ pub fn main() !void {
         dx12.command_queue.ExecuteCommandLists(1, &.{@ptrCast(dx12.command_list)});
 
         dx12.present();
-
-        frac += frac_delta;
-        if (frac > 1.0 or frac < 0.0) {
-            frac_delta = -frac_delta;
-        }
     }
 
     dx12.flush();

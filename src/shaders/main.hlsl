@@ -1,9 +1,15 @@
 #define ROOT_SIGNATURE \
     "RootFlags(ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT)," \
-    "CBV(b0)"
+    "CBV(b0)," \
+    "CBV(b1)"
 
 struct Camera {
-    float4x4 mat;
+    float4x4 view;
+    float4x4 proj;
+};
+
+struct Instance {
+    float4x4 model;
 };
 
 struct VSInput {
@@ -15,13 +21,17 @@ struct VSOutput {
 };
 
 ConstantBuffer<Camera> camera : register(b0);
+ConstantBuffer<Instance> instance : register(b1);
 
 [RootSignature(ROOT_SIGNATURE)]
 VSOutput vsMain(VSInput input) {
     VSOutput output;
 
+    float4x4 vp = mul(camera.view, camera.proj);
+    float4x4 mvp = mul(instance.model, vp);
+
     output.position = float4(input.position, 1.0);
-    output.position = mul(output.position, camera.mat);
+    output.position = mul(output.position, mvp);
 
     return output;
 }
