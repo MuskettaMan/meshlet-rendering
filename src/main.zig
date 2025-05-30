@@ -106,6 +106,11 @@ fn createResource(comptime T: type, device: *d3d12.IDevice9, min_aligned: bool) 
     return .{ .resource = resource.?, .buffer_size = buffer_size };
 }
 
+const RootConst = struct {
+    vertex_offset: u32,
+    meshlet_offset: u32,
+};
+
 pub fn main() !void {
     _ = windows.CoInitializeEx(null, windows.COINIT_MULTITHREADED);
     defer windows.CoUninitialize();
@@ -116,6 +121,17 @@ pub fn main() !void {
 
     var dx12 = Dx12State.init(window);
     defer dx12.deinit();
+
+    var options7: d3d12.FEATURE_DATA_D3D12_OPTIONS7 = undefined;
+    const res = dx12.device.CheckFeatureSupport(.OPTIONS7, &options7, @sizeOf(d3d12.FEATURE_DATA_D3D12_OPTIONS7));
+    if(options7.MeshShaderTier == .NOT_SUPPORTED or res != windows.S_OK) {
+        _ = windows.MessageBoxA(window, 
+                "This applications requires graphics card that supports Mesh Shader " ++
+                    "(NVIDIA GeForce Turing or newer, AMD Radeon RX 6000 or newer).",
+                "No DirectX 12 Mesh Shader support",
+                windows.MB_OK | windows.MB_ICONERROR);
+        return;
+    }
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     //defer gpa.deinit();
@@ -142,27 +158,23 @@ pub fn main() !void {
     defer zgui.backend.deinit();
 
     const root_signature: *d3d12.IRootSignature, const pipeline: *d3d12.IPipelineState = blk: {
-        const vs_cso = @embedFile("./shaders/main.vs.cso");
+        const ms_cso = @embedFile("./shaders/main.ms.cso");
         const ps_cso = @embedFile("./shaders/main.ps.cso");
 
-        const input_element = d3d12.INPUT_ELEMENT_DESC.init("POSITION", 0, dxgi.FORMAT.R32G32B32_FLOAT, 0, 0, .PER_VERTEX_DATA, 0);
-        const input_elements = [_]d3d12.INPUT_ELEMENT_DESC{input_element};
-        const input_layout = d3d12.INPUT_LAYOUT_DESC.init(&input_elements);
+        var mesh_state_desc = d3d12.MESH_SHADER_PIPELINE_STATE_DESC.initDefault();
+        mesh_state_desc.RTVFormats[0] = .R8G8B8A8_UNORM;
+        mesh_state_desc.DepthStencilState.DepthEnable = windows.FALSE;
+        mesh_state_desc.NumRenderTargets = 1;
+        mesh_state_desc.MS = .{ .pShaderBytecode = ms_cso, .BytecodeLength = ms_cso.len };
+        mesh_state_desc.PS = .{ .pShaderBytecode = ps_cso, .BytecodeLength = ps_cso.len };
 
-        var pso_desc = d3d12.GRAPHICS_PIPELINE_STATE_DESC.initDefault();
-        pso_desc.DepthStencilState.DepthEnable = windows.FALSE;
-        pso_desc.RTVFormats[0] = .R8G8B8A8_UNORM;
-        pso_desc.NumRenderTargets = 1;
-        pso_desc.PrimitiveTopologyType = .TRIANGLE;
-        pso_desc.InputLayout = input_layout;
-        pso_desc.VS = .{ .pShaderBytecode = vs_cso, .BytecodeLength = vs_cso.len };
-        pso_desc.PS = .{ .pShaderBytecode = ps_cso, .BytecodeLength = ps_cso.len };
+        var stream = d3d12.PIPELINE_MESH_STATE_STREAM.init(mesh_state_desc);
 
         var root_signature: *d3d12.IRootSignature = undefined;
-        hrPanicOnFail(dx12.device.CreateRootSignature(0, pso_desc.VS.pShaderBytecode.?, pso_desc.VS.BytecodeLength, &d3d12.IID_IRootSignature, @ptrCast(&root_signature)));
+        hrPanicOnFail(dx12.device.CreateRootSignature(0, mesh_state_desc.MS.pShaderBytecode.?, mesh_state_desc.MS.BytecodeLength, &d3d12.IID_IRootSignature, @ptrCast(&root_signature)));
 
         var pipeline: *d3d12.IPipelineState = undefined;
-        hrPanicOnFail(dx12.device.CreateGraphicsPipelineState(&pso_desc, &d3d12.IID_IPipelineState, @ptrCast(&pipeline)));
+        hrPanicOnFail(dx12.device.CreatePipelineState(&d3d12.PIPELINE_STATE_STREAM_DESC{ .SizeInBytes = @sizeOf(@TypeOf(stream)), .pPipelineStateSubobjectStream = @ptrCast(&stream) }, &d3d12.IID_IPipelineState, @ptrCast(&pipeline)));
 
         break :blk .{ root_signature, pipeline };
     };
@@ -191,15 +203,15 @@ pub fn main() !void {
     zmath.storeMat(f32Ptr(instance_ptr)[0..16], model);
 
     const camera_descriptor = dx12.cbv_srv_heap.allocate();
-    const camera_cbv_desc: d3d12.CONSTANT_BUFFER_VIEW_DESC = .{ .BufferLocation = camera_resource.resource.GetGPUVirtualAddress(), .SizeInBytes = camera_resource.bufferSize };
+    const camera_cbv_desc: d3d12.CONSTANT_BUFFER_VIEW_DESC = .{ .BufferLocation = camera_resource.resource.GetGPUVirtualAddress(), .SizeInBytes = camera_resource.buffer_size };
     dx12.device.CreateConstantBufferView(&camera_cbv_desc, camera_descriptor.cpu_handle);
 
     const instance_descriptor = dx12.cbv_srv_heap.allocate();
-    const instance_cbv_desc: d3d12.CONSTANT_BUFFER_VIEW_DESC = .{ .BufferLocation = instance_resource.resource.GetGPUVirtualAddress(), .SizeInBytes = instance_resource.bufferSize };
+    const instance_cbv_desc: d3d12.CONSTANT_BUFFER_VIEW_DESC = .{ .BufferLocation = instance_resource.resource.GetGPUVirtualAddress(), .SizeInBytes = instance_resource.buffer_size };
     dx12.device.CreateConstantBufferView(&instance_cbv_desc, instance_descriptor.cpu_handle);
 
     const vertex_buffer_resource = createResource(@TypeOf(vertices), dx12.device, false);
-    const vertex_buffer: d3d12.VERTEX_BUFFER_VIEW = .{ .BufferLocation = vertex_buffer_resource.resource.GetGPUVirtualAddress(), .SizeInBytes = vertex_buffer_resource.bufferSize, .StrideInBytes = @sizeOf(f32) * 3 };
+    const vertex_buffer: d3d12.VERTEX_BUFFER_VIEW = .{ .BufferLocation = vertex_buffer_resource.resource.GetGPUVirtualAddress(), .SizeInBytes = vertex_buffer_resource.buffer_size, .StrideInBytes = @sizeOf(f32) * 3 };
 
     const vertex_ptr = vertex_buffer_resource.map();
     const arr: [*][3]f32 = @ptrCast(f32Ptr(vertex_ptr));
@@ -315,7 +327,7 @@ pub fn main() !void {
         dx12.command_list.SetGraphicsRootConstantBufferView(0, camera_resource.resource.GetGPUVirtualAddress());
         dx12.command_list.SetGraphicsRootConstantBufferView(1, instance_resource.resource.GetGPUVirtualAddress());
 
-        dx12.command_list.DrawInstanced(3, 1, 0, 0);
+        dx12.command_list.DispatchMesh(1, 1, 1);
 
         dx12.command_list.ResourceBarrier(1, &.{.{ .Type = .TRANSITION, .Flags = .{}, .u = .{ .Transition = .{
             .pResource = dx12.swap_chain_textures[back_buffer_index],

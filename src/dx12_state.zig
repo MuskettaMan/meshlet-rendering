@@ -89,8 +89,11 @@ pub const Dx12State = struct {
             }
         }
 
+        var adapter: *dxgi.IAdapter1 = undefined;
+        _ = dxgi_factory.EnumAdapterByGpuPreference(0, .HIGH_PERFORMANCE, &dxgi.IID_IAdapter1, @ptrCast(&adapter));
+
         var device: *d3d12.IDevice9 = undefined;
-        if (d3d12.CreateDevice(null, .@"11_0", &d3d12.IID_IDevice9, @ptrCast(&device)) != windows.S_OK) {
+        if (d3d12.CreateDevice(@ptrCast(adapter), .@"11_0", &d3d12.IID_IDevice9, @ptrCast(&device)) != windows.S_OK) {
             _ = windows.MessageBoxA(window, "Failed to create Direct3D 12 Device. This applications requires graphics card " ++
                 "with DirectX 12 Feature Level 11.0 support.", "Your graphics card driver may be old", windows.MB_OK | windows.MB_ICONERROR);
             windows.ExitProcess(0);

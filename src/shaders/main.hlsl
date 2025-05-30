@@ -1,7 +1,14 @@
 #define ROOT_SIGNATURE \
-    "RootFlags(ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT)," \
-    "CBV(b0)," \
-    "CBV(b1)"
+    "RootFlags(ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT), " \
+    "CBV(b0), " \
+    "CBV(b1), " //\
+    //"RootConstants(b2, num32BitConstants = 2), " \
+    //"DescriptorTable(SRV(t0, numDescriptors = 4))"
+
+struct RootConst {
+    uint vertex_offset;
+    uint meshlet_offset;
+};
 
 struct Camera {
     float4x4 view;
@@ -12,31 +19,51 @@ struct Instance {
     float4x4 model;
 };
 
-struct VSInput {
+struct InputVertex {
     float3 position : POSITION;
 };
 
-struct VSOutput {
-    float4 position : SV_Position;
+struct OutputVertex {
+    float4 position : SV_POSITION;
 };
 
 ConstantBuffer<Camera> camera : register(b0);
 ConstantBuffer<Instance> instance : register(b1);
+ConstantBuffer<RootConst> root_const : register(b2);
+
+StructuredBuffer<InputVertex> vertices : register(t0);
+StructuredBuffer<uint32_t> indices : register(t1);
+StructuredBuffer<uint64_t> meshlets : register(t2);
+Buffer<uint32_t> meshlets_data : register(t3);
+
+#define NUM_THREADS 32
+#define MAX_NUM_VERTICES 64
+#define MAX_NUM_TRIANGLES 64
 
 [RootSignature(ROOT_SIGNATURE)]
-VSOutput vsMain(VSInput input) {
-    VSOutput output;
+[outputtopology("triangle")]
+[numthreads(NUM_THREADS, 1, 1)]
+void msMain(
+    uint group_index : SV_GroupIndex, 
+    uint3 group_id : SV_GroupID, 
+    out vertices OutputVertex out_vertices[MAX_NUM_VERTICES], 
+    out indices uint3 out_triangles[MAX_NUM_TRIANGLES]
+) {
+    SetMeshOutputCounts(3, 1);
 
-    float4x4 vp = mul(camera.view, camera.proj);
-    float4x4 mvp = mul(instance.model, vp);
+    for(uint i = 0; i < MAX_NUM_VERTICES; ++i) {
+        out_vertices[i] = OutputVertex(float4(0.0, 0.0, 0.0, 0.0));
+    }
+    out_vertices[0] = OutputVertex(float4(-0.9, -0.9, 0.0, 0.0));
+    out_vertices[1] = OutputVertex(float4(0.0, 0.9, 0.0, 0.0));
+    out_vertices[2] = OutputVertex(float4(0.9, -0.9, 0.0, 0.0));
 
-    output.position = float4(input.position, 1.0);
-    output.position = mul(output.position, mvp);
-
-    return output;
+    for(uint i = 0; i < MAX_NUM_TRIANGLES; ++i) {
+        out_triangles[i] = uint3(0, 1, 2);
+    }
 }
 
 [RootSignature(ROOT_SIGNATURE)]
-void psMain(float4 position : SV_Position, out float4 out_color : SV_Target0) {
+void psMain(float3 barycentrics : SV_Barycentrics, OutputVertex vertex, out float4 out_color : SV_Target0) {
     out_color = float4(0.75, 0.0, 0.0, 1.0);
 }

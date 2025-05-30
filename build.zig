@@ -41,16 +41,14 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("zgui", zgui.module("root"));
     exe.linkLibrary(zgui.artifact("imgui"));
 
-    const zmath = b.dependency("zmath", .{
-
-    });
+    const zmath = b.dependency("zmath", .{});
     exe.root_module.addImport("zmath", zmath.module("root"));
 
     const compile_shaders = @import("zwindows").addCompileShaders(b, "Main", zwindows_dependency, .{ .shader_ver = "6_5" });
     const root_path = pathResolve(b, &.{ @src().file, ".." });
 
     const hlsl_path = b.pathJoin(&.{ root_path, "src", "shaders", "main.hlsl" });
-    compile_shaders.addVsShader(hlsl_path, "vsMain", b.pathJoin(&.{ root_path, "src", "shaders", "main.vs.cso" }), "");
+    compile_shaders.addMsShader(hlsl_path, "msMain", b.pathJoin(&.{ root_path, "src", "shaders", "main.ms.cso" }), "");
     compile_shaders.addPsShader(hlsl_path, "psMain", b.pathJoin(&.{ root_path, "src", "shaders", "main.ps.cso" }), "");
 
     exe.step.dependOn(compile_shaders.step);
