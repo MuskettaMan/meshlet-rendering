@@ -206,7 +206,7 @@ pub const CompileShaders = struct {
             else => @panic("Unsupported target"),
         };
 
-        const dxc_command = [9][]const u8{
+        const dxc_command = [_][]const u8{
             dxc_path,
             input_path,
             b.fmt("/E {s}", .{entry_point}),
@@ -215,7 +215,9 @@ pub const CompileShaders = struct {
             if (define.len == 0) "" else b.fmt("/D {s}", .{define}),
             "/WX",
             "/Ges",
-            "/O3",
+            "/Od",
+            "/Zi",
+            "-Qembed_debug",
         };
 
         const cmd_step = b.addSystemCommand(&dxc_command);

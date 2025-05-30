@@ -51,16 +51,11 @@ void msMain(
 ) {
     SetMeshOutputCounts(3, 1);
 
-    for(uint i = 0; i < MAX_NUM_VERTICES; ++i) {
-        out_vertices[i] = OutputVertex(float4(0.0, 0.0, 0.0, 0.0));
-    }
-    out_vertices[0] = OutputVertex(float4(-0.9, -0.9, 0.0, 0.0));
-    out_vertices[1] = OutputVertex(float4(0.0, 0.9, 0.0, 0.0));
-    out_vertices[2] = OutputVertex(float4(0.9, -0.9, 0.0, 0.0));
+    out_vertices[0] = OutputVertex(float4(0.0, 0.5, 0.0, 1.0));
+    out_vertices[1] = OutputVertex(float4(0.5, -0.5, 0.0, 1.0));
+    out_vertices[2] = OutputVertex(float4(-0.5, -0.5, 0.0, 1.0));
 
-    for(uint i = 0; i < MAX_NUM_TRIANGLES; ++i) {
-        out_triangles[i] = uint3(0, 1, 2);
-    }
+    out_triangles[0] = uint3(0, 1, 2);
 }
 
 [RootSignature(ROOT_SIGNATURE)]
