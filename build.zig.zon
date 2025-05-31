@@ -11,7 +11,10 @@
         },
         .zmath = .{
             .path = "libs/zmath"
-        }
+        },
+        .zmesh = .{
+            .path = "libs/zmesh"
+        },
     },
 
     .paths = .{

@@ -44,6 +44,10 @@ pub fn build(b: *std.Build) void {
     const zmath = b.dependency("zmath", .{});
     exe.root_module.addImport("zmath", zmath.module("root"));
 
+    const zmesh = b.dependency("zmesh", .{});
+    exe.root_module.addImport("zmesh", zmesh.module("root"));
+    exe.linkLibrary(zmesh.artifact("zmesh"));
+
     const compile_shaders = @import("zwindows").addCompileShaders(b, "Main", zwindows_dependency, .{ .shader_ver = "6_5" });
     const root_path = pathResolve(b, &.{ @src().file, ".." });
 

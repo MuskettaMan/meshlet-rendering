@@ -7,3 +7,6 @@
 [submodule "libs/zmath"]
 	path = libs/zmath
 	url = https://github.com/zig-gamedev/zmath
+[submodule "libs/zmesh"]
+	path = libs/zmesh
+	url = https://github.com/zig-gamedev/zmesh

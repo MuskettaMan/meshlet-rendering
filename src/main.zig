@@ -1,8 +1,10 @@
 const std = @import("std");
-
 const zgui = @import("zgui");
 const zmath = @import("zmath");
 const zwindows = @import("zwindows");
+const zmesh = @import("zmesh");
+const zmesh_data = @import("mesh_data.zig");
+
 const windows = zwindows.windows;
 const dxgi = zwindows.dxgi;
 const d3d12 = zwindows.d3d12;
@@ -10,12 +12,12 @@ const d3d12d = zwindows.d3d12d;
 const hrPanicOnFail = zwindows.hrPanicOnFail;
 const Dx12State = @import("dx12_state.zig").Dx12State;
 const Camera = @import("camera.zig").Camera;
-const Vertex = @import("vertex.zig").Vertex;
+const Vertex = zmesh_data.Vertex;
+const Mesh = zmesh_data.Mesh;
+const Meshlet = zmesh_data.Meshlet;
 
 const window_name = "DX12 Zig";
 const content_dir = "content/";
-
-const vertices = [_]Vertex{ .{ .position = .{ -0.9, -0.9, 0.0, 0.0 } }, .{ .position = .{ 0.0, 0.9, 0.0, 0.0 } }, .{ .position = .{ 0.9, -0.9, 0.0, 0.0 } } };
 
 fn processWindowMessage(window: windows.HWND, message: windows.UINT, wparam: windows.WPARAM, lparam: windows.LPARAM) callconv(windows.WINAPI) windows.LRESULT {
     switch (message) {
@@ -124,12 +126,9 @@ pub fn main() !void {
 
     var options7: d3d12.FEATURE_DATA_D3D12_OPTIONS7 = undefined;
     const res = dx12.device.CheckFeatureSupport(.OPTIONS7, &options7, @sizeOf(d3d12.FEATURE_DATA_D3D12_OPTIONS7));
-    if(options7.MeshShaderTier == .NOT_SUPPORTED or res != windows.S_OK) {
-        _ = windows.MessageBoxA(window, 
-                "This applications requires graphics card that supports Mesh Shader " ++
-                    "(NVIDIA GeForce Turing or newer, AMD Radeon RX 6000 or newer).",
-                "No DirectX 12 Mesh Shader support",
-                windows.MB_OK | windows.MB_ICONERROR);
+    if (options7.MeshShaderTier == .NOT_SUPPORTED or res != windows.S_OK) {
+        _ = windows.MessageBoxA(window, "This applications requires graphics card that supports Mesh Shader " ++
+            "(NVIDIA GeForce Turing or newer, AMD Radeon RX 6000 or newer).", "No DirectX 12 Mesh Shader support", windows.MB_OK | windows.MB_ICONERROR);
         return;
     }
 
@@ -156,6 +155,24 @@ pub fn main() !void {
         .font_srv_gpu_desc_handle = @bitCast(font_descriptor.gpu_handle),
     });
     defer zgui.backend.deinit();
+
+    zmesh.init(allocator);
+    defer zmesh.deinit();
+
+    var all_meshes = std.ArrayList(Mesh).init(allocator);
+    defer all_meshes.deinit();
+    var all_vertices = std.ArrayList(Vertex).init(allocator);
+    defer all_vertices.deinit();
+    var all_indices = std.ArrayList(u32).init(allocator);
+    defer all_indices.deinit();
+    var all_meshlets = std.ArrayList(Meshlet).init(allocator);
+    defer all_meshlets.deinit();
+    var all_meshlets_data = std.ArrayList(u32).init(allocator);
+    defer all_meshlets_data.deinit();
+
+    //const path: [:0]const u8 = try std.mem.concatWithSentinel(allocator, u8, &.{ content_dir, "Avocodo.gltf" }, 0);
+    const path: [:0]const u8 = "content/Avocado.glb";
+    try zmesh_data.loadOptimizedMesh(allocator, path, &all_meshes, &all_vertices, &all_indices, &all_meshlets, &all_meshlets_data);
 
     const root_signature: *d3d12.IRootSignature, const pipeline: *d3d12.IPipelineState = blk: {
         const ms_cso = @embedFile("./shaders/main.ms.cso");
@@ -210,15 +227,14 @@ pub fn main() !void {
     const instance_cbv_desc: d3d12.CONSTANT_BUFFER_VIEW_DESC = .{ .BufferLocation = instance_resource.resource.GetGPUVirtualAddress(), .SizeInBytes = instance_resource.buffer_size };
     dx12.device.CreateConstantBufferView(&instance_cbv_desc, instance_descriptor.cpu_handle);
 
-    const vertex_buffer_resource = createResource(@TypeOf(vertices), dx12.device, false);
-    const vertex_buffer: d3d12.VERTEX_BUFFER_VIEW = .{ .BufferLocation = vertex_buffer_resource.resource.GetGPUVirtualAddress(), .SizeInBytes = vertex_buffer_resource.buffer_size, .StrideInBytes = @sizeOf(f32) * 3 };
+    //const vertex_buffer: d3d12.VERTEX_BUFFER_VIEW = .{ .BufferLocation = vertex_buffer_resource.resource.GetGPUVirtualAddress(), .SizeInBytes = vertex_buffer_resource.buffer_size, .StrideInBytes = @sizeOf(f32) * 3 };
 
-    const vertex_ptr = vertex_buffer_resource.map();
-    const arr: [*][3]f32 = @ptrCast(f32Ptr(vertex_ptr));
-    for (vertices, 0..) |value, i| {
-        zmath.storeArr3(&arr[i], value.position);
-    }
-    vertex_buffer_resource.unmap();
+    //const vertex_ptr = vertex_buffer_resource.map();
+    //const arr: [*][3]f32 = @ptrCast(f32Ptr(vertex_ptr));
+    //for (vertices, 0..) |value, i| {
+    //    zmath.storeArr3(&arr[i], value.position);
+    //}
+    //vertex_buffer_resource.unmap();
 
     var window_rect: windows.RECT = undefined;
     _ = windows.GetClientRect(window, &window_rect);
@@ -323,7 +339,7 @@ pub fn main() !void {
         dx12.command_list.SetPipelineState(pipeline);
         dx12.command_list.SetGraphicsRootSignature(root_signature);
 
-        dx12.command_list.IASetVertexBuffers(0, 1, @ptrCast(&vertex_buffer));
+        //dx12.command_list.IASetVertexBuffers(0, 1, @ptrCast(&vertex_buffer));
         dx12.command_list.SetGraphicsRootConstantBufferView(0, camera_resource.resource.GetGPUVirtualAddress());
         dx12.command_list.SetGraphicsRootConstantBufferView(1, instance_resource.resource.GetGPUVirtualAddress());
 
