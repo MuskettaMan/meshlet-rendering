@@ -1,9 +1,9 @@
 #define ROOT_SIGNATURE \
     "RootFlags(ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT), " \
     "CBV(b0), " \
-    "CBV(b1), " //\
-    //"RootConstants(b2, num32BitConstants = 2), " \
-    //"DescriptorTable(SRV(t0, numDescriptors = 4))"
+    "CBV(b1), " \
+    "RootConstants(b2, num32BitConstants = 2), " \
+    "DescriptorTable(SRV(t0, numDescriptors = 4))"
 
 struct RootConst {
     uint vertex_offset;

@@ -32,8 +32,8 @@ comptime {
     assert(@alignOf(Meshlet) == 8);
 }
 
-pub fn loadOptimizedMesh(allocator: std.mem.Allocator, path: [:0]const u8, all_meshes: *std.ArrayList(Mesh), all_vertices: *std.ArrayList(Vertex), all_indices: *std.ArrayList(u32), all_meshlets: *std.ArrayList(Meshlet), all_meshlets_data: *std.ArrayList(u32)) !void {
-    const data = zcgltf.parseAndLoadFile(path) catch unreachable;
+pub fn loadOptimizedMesh(allocator: std.mem.Allocator, path: *const [:0]const u8, all_meshes: *std.ArrayList(Mesh), all_vertices: *std.ArrayList(Vertex), all_indices: *std.ArrayList(u32), all_meshlets: *std.ArrayList(Meshlet), all_meshlets_data: *std.ArrayList(u32)) !void {
+    const data = zcgltf.parseAndLoadFile(path.*) catch unreachable;
     defer zcgltf.free(data);
 
     var mesh_indices = std.ArrayList(u32).init(allocator);

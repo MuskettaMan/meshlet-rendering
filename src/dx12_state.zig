@@ -55,8 +55,6 @@ pub const Dx12State = struct {
     rtv_heap: *d3d12.IDescriptorHeap,
     rtv_heap_start: d3d12.CPU_DESCRIPTOR_HANDLE,
 
-    cbv_srv_heap: CbvSrvHeap,
-
     frame_fence: *d3d12.IFence,
     frame_fence_event: windows.HANDLE,
     frame_fence_counter: u64 = 0,
@@ -144,8 +142,6 @@ pub const Dx12State = struct {
 
         const rtv_heap_start = rtv_heap.GetCPUDescriptorHandleForHeapStart();
 
-        const cbv_srv_heap: CbvSrvHeap = CbvSrvHeap.init(16, device);
-
         for (swap_chain_textures, 0..) |texture, i| {
             device.CreateRenderTargetView(texture, null, .{ .ptr = rtv_heap_start.ptr + i * device.GetDescriptorHandleIncrementSize(.RTV) });
         }
@@ -179,7 +175,6 @@ pub const Dx12State = struct {
             .swap_chain_textures = swap_chain_textures,
             .rtv_heap = rtv_heap,
             .rtv_heap_start = rtv_heap_start,
-            .cbv_srv_heap = cbv_srv_heap,
             .frame_fence = frame_fence,
             .frame_fence_event = frame_fence_event,
             .command_allocators = command_allocators,
@@ -198,7 +193,6 @@ pub const Dx12State = struct {
         _ = dx12.command_queue.Release();
         _ = dx12.device.Release();
         _ = dx12.dxgi_factory.Release();
-        dx12.cbv_srv_heap.deinit();
         dx12.* = undefined;
     }
 
