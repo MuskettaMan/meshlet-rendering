@@ -201,9 +201,9 @@ pub fn main() !void {
     var all_meshlets_data = std.ArrayList(u32).init(allocator);
     defer all_meshlets_data.deinit();
 
-    const path: [:0]const u8 = "content/Cube/Cube.gltf";
-    //const path: [:0]const u8 = "content/Avocado.glb";
-    try zmesh_data.loadOptimizedMesh(allocator, &path, &all_meshes, &all_vertices, &all_indices, &all_meshlets, &all_meshlets_data);
+    //const path: [:0]const u8 = "content/Cube/Cube.gltf";
+    const path: [:0]const u8 = "content/DragonAttenuation.glb";
+    try zmesh_data.loadOptimizedMesh(allocator, &path, 1, &all_meshes, &all_vertices, &all_indices, &all_meshlets, &all_meshlets_data);
 
     const root_signature: *d3d12.IRootSignature, const pipeline: *d3d12.IPipelineState = blk: {
         const ms_cso = @embedFile("./shaders/main.ms.cso");
@@ -351,7 +351,10 @@ pub fn main() !void {
         const delta_time: f32 = @as(f32, @floatFromInt(delta_time_i64)) / @as(f32, std.time.us_per_s);
         total_time += delta_time;
 
-        model = zmath.rotationY(total_time);
+        const scale = 0.4;
+        model = zmath.scaling(scale, scale, scale);
+        model = zmath.mul(model, zmath.rotationX(std.math.pi / 2.0));
+        //model = zmath.mul(model, zmath.rotationY(total_time));
 
         zmath.storeMat(f32Ptr(instance_ptr)[0..16], zmath.transpose(model));
 
