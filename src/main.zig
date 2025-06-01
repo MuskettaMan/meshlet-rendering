@@ -84,6 +84,7 @@ fn copyBuffer(comptime T: type, name: [:0]const u16, src_data: *const std.ArrayL
 const RootConst = struct {
     vertex_offset: u32,
     meshlet_offset: u32,
+    draw_mode: u32,
 };
 
 pub fn main() !void {
@@ -106,7 +107,7 @@ pub fn main() !void {
     }
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    //defer gpa.deinit();
+    defer _ = gpa.deinit();
 
     const allocator = gpa.allocator();
 
@@ -181,7 +182,8 @@ pub fn main() !void {
     var model = zmath.identity();
 
     var camera = Camera.init();
-    camera.view = zmath.inverse(zmath.translation(0.0, 0.0, -10.0));
+    camera.position = .{ 0.0, 0.0, -10.0, 0.0 };
+    camera.view = zmath.inverse(zmath.translation(camera.position[0], camera.position[1], camera.position[2]));
     camera.proj = zmath.perspectiveFovLh(0.25 * std.math.pi, aspect_ratio, 0.01, 200.0);
 
     var camera_resource = createResource(Camera, std.unicode.utf8ToUtf16LeAllocZ(allocator, "CameraBuffer") catch unreachable, .UPLOAD, dx12.device, true);
@@ -189,6 +191,7 @@ pub fn main() !void {
     defer camera_resource.unmap();
     zmath.storeMat(f32Ptr(camera_ptr)[0..16], zmath.transpose(camera.view));
     zmath.storeMat(f32Ptr(camera_ptr)[16..32], zmath.transpose(camera.proj));
+    zmath.store(f32Ptr(camera_ptr)[32..35], camera.position, 3);
 
     var instance_resource = createResource(zmath.Mat, std.unicode.utf8ToUtf16LeAllocZ(allocator, "InstanceBuffer") catch unreachable, .UPLOAD, dx12.device, true);
     const instance_ptr = instance_resource.map();
@@ -244,6 +247,8 @@ pub fn main() !void {
     var time = std.time.microTimestamp();
     var delta_time_i64: i64 = 0;
     var total_time: f32 = 0;
+
+    var drawMode = DrawMode.Shaded;
 
     main_loop: while (true) {
         {
@@ -340,8 +345,10 @@ pub fn main() !void {
         zgui.backend.newFrame(@intCast(width), @intCast(height));
 
         // Can draw gui elemenets here.
-        var b = true;
-        zgui.showDemoWindow(&b);
+        if (zgui.begin("Settings", .{ .flags = .{ .always_auto_resize = true } })) {
+            _ = zgui.comboFromEnum("Draw Mode", &drawMode);
+            zgui.end();
+        }
 
         dx12.command_list.IASetPrimitiveTopology(.TRIANGLELIST);
         dx12.command_list.SetPipelineState(pipeline);
@@ -350,7 +357,7 @@ pub fn main() !void {
         dx12.command_list.SetGraphicsRootConstantBufferView(0, camera_resource.resource.GetGPUVirtualAddress());
         dx12.command_list.SetGraphicsRootConstantBufferView(1, instance_resource.resource.GetGPUVirtualAddress());
 
-        dx12.command_list.SetGraphicsRoot32BitConstants(2, 2, &.{ all_meshes.items[0].vertex_offset, all_meshes.items[0].index_offset }, 0);
+        dx12.command_list.SetGraphicsRoot32BitConstants(2, 3, &.{ all_meshes.items[0].vertex_offset, all_meshes.items[0].index_offset, @intFromEnum(drawMode) }, 0);
 
         const heaps = [_]*d3d12.IDescriptorHeap{meshlet_heap.heap};
         dx12.command_list.SetDescriptorHeaps(1, &heaps);
@@ -378,3 +385,5 @@ pub fn main() !void {
 
     dx12.flush();
 }
+
+const DrawMode = enum { Wireframe, Shaded };
