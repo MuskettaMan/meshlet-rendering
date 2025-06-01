@@ -211,7 +211,8 @@ pub fn main() !void {
 
         var mesh_state_desc = d3d12.MESH_SHADER_PIPELINE_STATE_DESC.initDefault();
         mesh_state_desc.RTVFormats[0] = .R8G8B8A8_UNORM;
-        mesh_state_desc.DepthStencilState.DepthEnable = windows.FALSE;
+        mesh_state_desc.DepthStencilState = d3d12.DEPTH_STENCIL_DESC1.initDefault();
+        mesh_state_desc.DSVFormat = .D32_FLOAT;
         mesh_state_desc.NumRenderTargets = 1;
         mesh_state_desc.MS = .{ .pShaderBytecode = ms_cso, .BytecodeLength = ms_cso.len };
         mesh_state_desc.PS = .{ .pShaderBytecode = ps_cso, .BytecodeLength = ps_cso.len };
@@ -237,7 +238,7 @@ pub fn main() !void {
 
     var camera = Camera.init();
     camera.view = zmath.inverse(zmath.translation(0.0, 0.0, -10.0));
-    camera.proj = zmath.perspectiveFovLh(0.25 * std.math.pi, aspect_ratio, 0.1, 20.0);
+    camera.proj = zmath.perspectiveFovLh(0.25 * std.math.pi, aspect_ratio, 0.01, 200.0);
 
     var camera_resource = createResource(Camera, std.unicode.utf8ToUtf16LeAllocZ(allocator, "CameraBuffer") catch unreachable, .UPLOAD, dx12.device, true);
     const camera_ptr = camera_resource.map();
@@ -354,7 +355,7 @@ pub fn main() !void {
         const scale = 0.4;
         model = zmath.scaling(scale, scale, scale);
         model = zmath.mul(model, zmath.rotationX(std.math.pi / 2.0));
-        //model = zmath.mul(model, zmath.rotationY(total_time));
+        model = zmath.mul(model, zmath.rotationY(total_time));
 
         zmath.storeMat(f32Ptr(instance_ptr)[0..16], zmath.transpose(model));
 
@@ -388,7 +389,8 @@ pub fn main() !void {
             .StateAfter = .{ .RENDER_TARGET = true },
         } } }});
 
-        dx12.command_list.OMSetRenderTargets(1, &.{back_buffer_descriptor}, windows.TRUE, null);
+        dx12.command_list.OMSetRenderTargets(1, &.{back_buffer_descriptor}, windows.TRUE, &dx12.depth_heap_handle);
+        dx12.command_list.ClearDepthStencilView(dx12.depth_heap_handle, .{ .DEPTH = true }, 1.0, 0, 0, null);
         dx12.command_list.ClearRenderTargetView(back_buffer_descriptor, &.{ 0.2, 0.2, 0.8, 1.0 }, 0, null);
 
         zgui.backend.newFrame(@intCast(width), @intCast(height));

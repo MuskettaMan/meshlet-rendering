@@ -52,6 +52,10 @@ pub const Dx12State = struct {
     swap_chain: *dxgi.ISwapChain3,
     swap_chain_textures: [num_frames]*d3d12.IResource,
 
+    dsv_heap: *d3d12.IDescriptorHeap,
+    depth_texture: *d3d12.IResource,
+    depth_heap_handle: d3d12.CPU_DESCRIPTOR_HANDLE,
+
     rtv_heap: *d3d12.IDescriptorHeap,
     rtv_heap_start: d3d12.CPU_DESCRIPTOR_HANDLE,
 
@@ -111,9 +115,12 @@ pub const Dx12State = struct {
         var rect: windows.RECT = undefined;
         _ = windows.GetClientRect(window, &rect);
 
+        const width: u32 = @intCast(rect.right);
+        const height: u32 = @intCast(rect.bottom);
+
         var swap_chain: *dxgi.ISwapChain3 = undefined;
         {
-            var desc = dxgi.SWAP_CHAIN_DESC{ .BufferDesc = .{ .Width = @intCast(rect.right), .Height = @intCast(rect.bottom), .RefreshRate = .{ .Numerator = 0, .Denominator = 0 }, .Format = rtv_format, .ScanlineOrdering = .UNSPECIFIED, .Scaling = .UNSPECIFIED }, .SampleDesc = .{ .Count = 1, .Quality = 0 }, .BufferUsage = .{ .RENDER_TARGET_OUTPUT = true }, .BufferCount = num_frames, .OutputWindow = window, .Windowed = windows.TRUE, .SwapEffect = .FLIP_DISCARD, .Flags = .{} };
+            var desc = dxgi.SWAP_CHAIN_DESC{ .BufferDesc = .{ .Width = width, .Height = height, .RefreshRate = .{ .Numerator = 0, .Denominator = 0 }, .Format = rtv_format, .ScanlineOrdering = .UNSPECIFIED, .Scaling = .UNSPECIFIED }, .SampleDesc = .{ .Count = 1, .Quality = 0 }, .BufferUsage = .{ .RENDER_TARGET_OUTPUT = true }, .BufferCount = num_frames, .OutputWindow = window, .Windowed = windows.TRUE, .SwapEffect = .FLIP_DISCARD, .Flags = .{} };
             var temp_swap_chain: *dxgi.ISwapChain = undefined;
             hrPanicOnFail(dxgi_factory.CreateSwapChain(@ptrCast(command_queue), &desc, @ptrCast(&temp_swap_chain)));
 
@@ -131,6 +138,24 @@ pub const Dx12State = struct {
         }
 
         std.log.info("Swap chain created", .{});
+
+        var dsv_heap: *d3d12.IDescriptorHeap = undefined;
+        hrPanicOnFail(device.CreateDescriptorHeap(&.{
+            .Type = .DSV,
+            .NumDescriptors = 16,
+            .Flags = .{},
+            .NodeMask = 0,
+        }, &d3d12.IID_IDescriptorHeap, @ptrCast(&dsv_heap)));
+
+        const depth_heap_handle = dsv_heap.GetCPUDescriptorHandleForHeapStart();
+
+        var depth_texture: ?*d3d12.IResource = null;
+        const depth_desc = d3d12.RESOURCE_DESC.initDepthBuffer(.R32_TYPELESS, width, height);
+        const heap_props = d3d12.HEAP_PROPERTIES.initType(.DEFAULT);
+        hrPanicOnFail(device.CreateCommittedResource(&heap_props, d3d12.HEAP_FLAGS{}, &depth_desc, .{ .DEPTH_WRITE = true }, &d3d12.CLEAR_VALUE.initDepthStencil(.D32_FLOAT, 1.0, 0), &d3d12.IID_IResource, @ptrCast(&depth_texture)));
+
+        const dsv_desc = d3d12.DEPTH_STENCIL_VIEW_DESC{ .Format = .D32_FLOAT, .ViewDimension = .TEXTURE2D, .Flags = .{}, .u = .{ .Texture2D = .{ .MipSlice = 0 } } };
+        device.CreateDepthStencilView(depth_texture, &dsv_desc, depth_heap_handle);
 
         var rtv_heap: *d3d12.IDescriptorHeap = undefined;
         hrPanicOnFail(device.CreateDescriptorHeap(&.{
@@ -173,6 +198,9 @@ pub const Dx12State = struct {
             .command_queue = command_queue,
             .swap_chain = swap_chain,
             .swap_chain_textures = swap_chain_textures,
+            .dsv_heap = dsv_heap,
+            .depth_texture = depth_texture.?,
+            .depth_heap_handle = depth_heap_handle,
             .rtv_heap = rtv_heap,
             .rtv_heap_start = rtv_heap_start,
             .frame_fence = frame_fence,
@@ -187,6 +215,7 @@ pub const Dx12State = struct {
         for (dx12.command_allocators) |commandAlloc| _ = commandAlloc.Release();
         _ = dx12.frame_fence.Release();
         _ = windows.CloseHandle(dx12.frame_fence_event);
+        _ = dx12.dsv_heap.Release();
         _ = dx12.rtv_heap.Release();
         for (dx12.swap_chain_textures) |swap_chain_texture| _ = swap_chain_texture.Release();
         _ = dx12.swap_chain.Release();

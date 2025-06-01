@@ -25,7 +25,7 @@ struct InputVertex {
 };
 
 struct OutputVertex {
-    float4 position : SV_POSITION;
+    float4 position : SV_Position;
     float3 color : _Color;
     float3 normal : _Normal;
 };
@@ -73,7 +73,7 @@ void msMain(
     const uint vertex_offset = data_offset;
     const uint index_offset = data_offset + num_vertices;
 
-    const float4x4 mvp = mul(mul(instance.model, camera.view), camera.proj);
+    const float4x4 mvp = mul(instance.model, mul(camera.view, camera.proj));
 
     SetMeshOutputCounts(num_vertices, num_triangles);
 
@@ -104,7 +104,7 @@ void psMain(float3 barycentrics : SV_Barycentrics, OutputVertex vertex, out floa
     float3 barys = barycentrics;
     const float3 deltas = fwidth(barys);
     const float3 smoothing = deltas * 1.0;
-    const float3 thickness = deltas * 0.25;
+    const float3 thickness = deltas * 0.01;
     barys = smoothstep(thickness, thickness + smoothing, barys);
     float min_bary = min(barys.x, min(barys.y, barys.z));
 
