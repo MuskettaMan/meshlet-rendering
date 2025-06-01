@@ -4,6 +4,7 @@ const zmath = @import("zmath");
 const zwindows = @import("zwindows");
 const zmesh = @import("zmesh");
 const zmesh_data = @import("mesh_data.zig");
+const winUtil = @import("win_util.zig");
 
 const windows = zwindows.windows;
 const dxgi = zwindows.dxgi;
@@ -17,65 +18,8 @@ const Vertex = zmesh_data.Vertex;
 const Mesh = zmesh_data.Mesh;
 const Meshlet = zmesh_data.Meshlet;
 
-const window_name = "DX12 Zig";
+const window_name: [:0]const u8 = "DX12 Zig";
 const content_dir = "content/";
-
-fn processWindowMessage(window: windows.HWND, message: windows.UINT, wparam: windows.WPARAM, lparam: windows.LPARAM) callconv(windows.WINAPI) windows.LRESULT {
-    switch (message) {
-        windows.WM_KEYDOWN => {
-            if (wparam == windows.VK_ESCAPE) {
-                windows.PostQuitMessage(0);
-                return 0;
-            }
-        },
-        windows.WM_GETMINMAXINFO => {
-            var info: *windows.MINMAXINFO = @ptrFromInt(@as(usize, @intCast(lparam)));
-            info.ptMinTrackSize.x = 400;
-            info.ptMinTrackSize.y = 400;
-            return 0;
-        },
-        windows.WM_DESTROY => {
-            windows.PostQuitMessage(0);
-            return 0;
-        },
-        else => {},
-    }
-
-    return windows.DefWindowProcA(window, message, wparam, lparam);
-}
-
-fn createWindow(width: u32, height: u32) windows.HWND {
-    const winclass = windows.WNDCLASSEXA{
-        .style = 0,
-        .lpfnWndProc = processWindowMessage,
-        .cbClsExtra = 0,
-        .cbWndExtra = 0,
-        .hInstance = @ptrCast(windows.GetModuleHandleA(null)),
-        .hIcon = null,
-        .hCursor = windows.LoadCursorA(null, @ptrFromInt(32512)),
-        .hbrBackground = null,
-        .lpszMenuName = null,
-        .lpszClassName = window_name,
-        .hIconSm = null,
-    };
-    _ = windows.RegisterClassExA(&winclass);
-
-    const style = windows.WS_OVERLAPPEDWINDOW;
-
-    var rect = windows.RECT{
-        .left = 0,
-        .top = 0,
-        .right = @intCast(width),
-        .bottom = @intCast(height),
-    };
-    _ = windows.AdjustWindowRectEx(&rect, style, windows.FALSE, 0);
-
-    const window = windows.CreateWindowExA(0, window_name, window_name, style + windows.WS_VISIBLE, windows.CW_USEDEFAULT, windows.CW_USEDEFAULT, rect.right - rect.left, rect.bottom - rect.top, null, null, winclass.hInstance, null).?;
-
-    std.log.info("Application window created", .{});
-
-    return window;
-}
 
 const Resource = struct {
     resource: *d3d12.IResource,
@@ -148,7 +92,7 @@ pub fn main() !void {
 
     _ = windows.SetProcessDPIAware();
 
-    const window = createWindow(1600, 1200);
+    const window = winUtil.createWindow(1600, 1200, &window_name);
 
     var dx12 = Dx12State.init(window);
     defer dx12.deinit();
@@ -396,6 +340,8 @@ pub fn main() !void {
         zgui.backend.newFrame(@intCast(width), @intCast(height));
 
         // Can draw gui elemenets here.
+        var b = true;
+        zgui.showDemoWindow(&b);
 
         dx12.command_list.IASetPrimitiveTopology(.TRIANGLELIST);
         dx12.command_list.SetPipelineState(pipeline);
