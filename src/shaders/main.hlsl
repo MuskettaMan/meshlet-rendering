@@ -115,7 +115,7 @@ void psMain(float3 barycentrics : SV_Barycentrics, OutputVertex vertex, out floa
         barys = smoothstep(thickness, thickness + smoothing, barys);
         float min_bary = min(barys.x, min(barys.y, barys.z));
 
-        out_color = float4(min_bary * vertex.color, 1.0);
+        out_color = float4(vertex.color, 1.0);
     } else if(root_const.draw_mode == 1) {
         float3 lightPos = { 10.0f, 10.0f, 10.0f };
         float3 cameraPos = { 0.0f, 0.0f, -10.0f };

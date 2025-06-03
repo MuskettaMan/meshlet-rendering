@@ -357,13 +357,24 @@ pub fn main() !void {
         dx12.command_list.SetGraphicsRootConstantBufferView(0, camera_resource.resource.GetGPUVirtualAddress());
         dx12.command_list.SetGraphicsRootConstantBufferView(1, instance_resource.resource.GetGPUVirtualAddress());
 
-        dx12.command_list.SetGraphicsRoot32BitConstants(2, 3, &.{ all_meshes.items[0].vertex_offset, all_meshes.items[0].index_offset, @intFromEnum(drawMode) }, 0);
-
         const heaps = [_]*d3d12.IDescriptorHeap{meshlet_heap.heap};
         dx12.command_list.SetDescriptorHeaps(1, &heaps);
         dx12.command_list.SetGraphicsRootDescriptorTable(3, vertex_buffer_descriptor.gpu_handle);
 
-        dx12.command_list.DispatchMesh(all_meshes.items[0].num_meshlets, 1, 1);
+        var pending_meshlets = all_meshes.items[0].num_meshlets;
+        while (pending_meshlets > 0) {
+            const meshlet_count = @min(pending_meshlets, std.math.maxInt(u16));
+            const offset = all_meshes.items[0].num_meshlets - pending_meshlets;
+
+            dx12.command_list.SetGraphicsRoot32BitConstants(2, 3, &.{ all_meshes.items[0].vertex_offset, all_meshes.items[0].index_offset + offset, @intFromEnum(drawMode) }, 0);
+            dx12.command_list.DispatchMesh(meshlet_count, 1, 1);
+
+            pending_meshlets -= meshlet_count;
+        }
+
+        const zgui_heaps = [_]*d3d12.IDescriptorHeap{zgui_heap.heap};
+        dx12.command_list.SetDescriptorHeaps(1, &zgui_heaps);
+        zgui.backend.draw(dx12.command_list);
 
         dx12.command_list.ResourceBarrier(1, &.{.{ .Type = .TRANSITION, .Flags = .{}, .u = .{ .Transition = .{
             .pResource = dx12.swap_chain_textures[back_buffer_index],
@@ -371,10 +382,6 @@ pub fn main() !void {
             .StateBefore = .{ .RENDER_TARGET = true },
             .StateAfter = d3d12.RESOURCE_STATES.PRESENT,
         } } }});
-
-        const zgui_heaps = [_]*d3d12.IDescriptorHeap{zgui_heap.heap};
-        dx12.command_list.SetDescriptorHeaps(1, &zgui_heaps);
-        zgui.backend.draw(dx12.command_list);
 
         hrPanicOnFail(dx12.command_list.Close());
 
