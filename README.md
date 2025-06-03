@@ -1,11 +1,15 @@
-# Zig dx12
+# Meshlets (in zig and DirectX 12)
 
-This is a project that I use to learn more about both Zig and DX12 graphics API.
+This is a project that I use to learn more about both Zig and DX12 graphics API. I'm exploring the use of mesh shaders and meshlets as a primitive. 
+
+![](content/cover.png)
 
 ## 🎯 Learning Goals
-- [ ] Understanding how to use separate modules in Zig
-- [ ] Make use of the Windows bindings in Zig for windowing and graphics
-- [ ] Understanding how DX12 graphics API works
+- [x] Understanding and creating a mesh shader pipeline
+- [x] Parsing a model and generating meshlets through `zmesh`
+- [x] Rendering a model through a mesh shader pipeline
+- [ ] Measuring the performance difference between the normal vertex pipe and mesh shaders
+- [ ] Implementing gpu-accelerated occlusion culling on meshlets
 
 ## 🛠️ How to Run
 ### **1. Install Zig**

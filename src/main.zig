@@ -301,10 +301,11 @@ pub fn main() !void {
         const delta_time: f32 = @as(f32, @floatFromInt(delta_time_i64)) / @as(f32, std.time.us_per_s);
         total_time += delta_time;
 
-        const scale = 0.4;
+        const scale = 0.6;
         model = zmath.scaling(scale, scale, scale);
         model = zmath.mul(model, zmath.rotationX(std.math.pi / 2.0));
         model = zmath.mul(model, zmath.rotationY(total_time));
+        model = zmath.mul(model, zmath.translation(0.0, -2.5, 0.0));
 
         zmath.storeMat(f32Ptr(instance_ptr)[0..16], zmath.transpose(model));
 
