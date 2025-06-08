@@ -33,20 +33,21 @@ comptime {
 }
 
 pub fn loadOptimizedMesh(allocator: std.mem.Allocator, path: *const [:0]const u8, mesh_index: u32, all_meshes: *std.ArrayList(Mesh), all_vertices: *std.ArrayList(Vertex), all_indices: *std.ArrayList(u32), all_meshlets: *std.ArrayList(Meshlet), all_meshlets_data: *std.ArrayList(u32)) !void {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+
+    const arenaAllocator = arena.allocator();
+
     const data = zcgltf.parseAndLoadFile(path.*) catch unreachable;
     defer zcgltf.free(data);
 
-    var mesh_indices = std.ArrayList(u32).init(allocator);
-    var mesh_positions = std.ArrayList([3]f32).init(allocator);
-    var mesh_normals = std.ArrayList([3]f32).init(allocator);
-    defer mesh_indices.deinit();
-    defer mesh_positions.deinit();
-    defer mesh_normals.deinit();
+    var mesh_indices = std.ArrayList(u32).init(arenaAllocator);
+    var mesh_positions = std.ArrayList([3]f32).init(arenaAllocator);
+    var mesh_normals = std.ArrayList([3]f32).init(arenaAllocator);
 
     zcgltf.appendMeshPrimitive(data, mesh_index, 0, &mesh_indices, &mesh_positions, &mesh_normals, null, null) catch unreachable;
 
-    var mesh_vertices = std.ArrayList(Vertex).init(allocator);
-    defer mesh_vertices.deinit();
+    var mesh_vertices = std.ArrayList(Vertex).init(arenaAllocator);
     try mesh_vertices.resize(mesh_positions.items.len);
     for (0..mesh_vertices.items.len) |i| {
         mesh_vertices.items[i] = .{
@@ -55,18 +56,17 @@ pub fn loadOptimizedMesh(allocator: std.mem.Allocator, path: *const [:0]const u8
         };
     }
 
-    var remap = std.ArrayList(u32).init(allocator);
-    defer remap.deinit();
+    var remap = std.ArrayList(u32).init(arenaAllocator);
     try remap.resize(mesh_indices.items.len);
 
     const num_unique_vertices = zmesh.opt.generateVertexRemap(remap.items, mesh_indices.items, Vertex, mesh_vertices.items);
 
-    var optimized_vertices = std.ArrayList(Vertex).init(allocator);
+    var optimized_vertices = std.ArrayList(Vertex).init(arenaAllocator);
     try optimized_vertices.resize(num_unique_vertices);
 
     zmesh.opt.remapVertexBuffer(Vertex, optimized_vertices.items, mesh_vertices.items, remap.items);
 
-    var optimized_indices = std.ArrayList(u32).init(allocator);
+    var optimized_indices = std.ArrayList(u32).init(arenaAllocator);
     try optimized_indices.resize(mesh_indices.items.len);
     zmesh.opt.remapIndexBuffer(optimized_indices.items, mesh_indices.items, remap.items);
 
@@ -76,9 +76,9 @@ pub fn loadOptimizedMesh(allocator: std.mem.Allocator, path: *const [:0]const u8
 
     const max_num_meshlets = zmesh.opt.buildMeshletsBound(optimized_indices.items.len, max_num_meshlet_vertices, max_num_meshlet_triangles);
 
-    var meshlets = std.ArrayList(zmesh.opt.Meshlet).init(allocator);
-    var meshlets_vertices = std.ArrayList(u32).init(allocator);
-    var meshlets_triangles = std.ArrayList(u8).init(allocator);
+    var meshlets = std.ArrayList(zmesh.opt.Meshlet).init(arenaAllocator);
+    var meshlets_vertices = std.ArrayList(u32).init(arenaAllocator);
+    var meshlets_triangles = std.ArrayList(u8).init(arenaAllocator);
 
     try meshlets.resize(max_num_meshlets);
     try meshlets_vertices.resize(max_num_meshlets * max_num_meshlet_vertices);

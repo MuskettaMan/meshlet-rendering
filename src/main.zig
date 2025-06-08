@@ -106,12 +106,13 @@ pub fn main() !void {
         return;
     }
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
+    const pageAllocator = std.heap.page_allocator;
+    var arena = std.heap.ArenaAllocator.init(pageAllocator);
+    defer arena.deinit();
 
-    const allocator = gpa.allocator();
+    const arenaAllocator = arena.allocator();
 
-    zgui.init(allocator);
+    zgui.init(pageAllocator);
     defer zgui.deinit();
 
     _ = zgui.io.addFontFromFile(content_dir ++ "Roboto-Medium.ttf", 16.0);
@@ -132,23 +133,23 @@ pub fn main() !void {
     });
     defer zgui.backend.deinit();
 
-    zmesh.init(allocator);
+    zmesh.init(pageAllocator);
     defer zmesh.deinit();
 
-    var all_meshes = std.ArrayList(Mesh).init(allocator);
+    var all_meshes = std.ArrayList(Mesh).init(pageAllocator);
     defer all_meshes.deinit();
-    var all_vertices = std.ArrayList(Vertex).init(allocator);
+    var all_vertices = std.ArrayList(Vertex).init(pageAllocator);
     defer all_vertices.deinit();
-    var all_indices = std.ArrayList(u32).init(allocator);
+    var all_indices = std.ArrayList(u32).init(pageAllocator);
     defer all_indices.deinit();
-    var all_meshlets = std.ArrayList(Meshlet).init(allocator);
+    var all_meshlets = std.ArrayList(Meshlet).init(pageAllocator);
     defer all_meshlets.deinit();
-    var all_meshlets_data = std.ArrayList(u32).init(allocator);
+    var all_meshlets_data = std.ArrayList(u32).init(pageAllocator);
     defer all_meshlets_data.deinit();
 
     //const path: [:0]const u8 = "content/Cube/Cube.gltf";
     const path: [:0]const u8 = "content/DragonAttenuation.glb";
-    try zmesh_data.loadOptimizedMesh(allocator, &path, 1, &all_meshes, &all_vertices, &all_indices, &all_meshlets, &all_meshlets_data);
+    try zmesh_data.loadOptimizedMesh(pageAllocator, &path, 1, &all_meshes, &all_vertices, &all_indices, &all_meshlets, &all_meshlets_data);
 
     const root_signature: *d3d12.IRootSignature, const pipeline: *d3d12.IPipelineState = blk: {
         const ms_cso = @embedFile("./shaders/main.ms.cso");
@@ -186,14 +187,14 @@ pub fn main() !void {
     camera.view = zmath.inverse(zmath.translation(camera.position[0], camera.position[1], camera.position[2]));
     camera.proj = zmath.perspectiveFovLh(0.25 * std.math.pi, aspect_ratio, 0.01, 200.0);
 
-    var camera_resource = createResource(Camera, std.unicode.utf8ToUtf16LeAllocZ(allocator, "CameraBuffer") catch unreachable, .UPLOAD, dx12.device, true);
+    var camera_resource = createResource(Camera, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "CameraBuffer") catch unreachable, .UPLOAD, dx12.device, true);
     const camera_ptr = camera_resource.map();
     defer camera_resource.unmap();
     zmath.storeMat(f32Ptr(camera_ptr)[0..16], zmath.transpose(camera.view));
     zmath.storeMat(f32Ptr(camera_ptr)[16..32], zmath.transpose(camera.proj));
     zmath.store(f32Ptr(camera_ptr)[32..35], camera.position, 3);
 
-    var instance_resource = createResource(zmath.Mat, std.unicode.utf8ToUtf16LeAllocZ(allocator, "InstanceBuffer") catch unreachable, .UPLOAD, dx12.device, true);
+    var instance_resource = createResource(zmath.Mat, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "InstanceBuffer") catch unreachable, .UPLOAD, dx12.device, true);
     const instance_ptr = instance_resource.map();
     defer instance_resource.unmap();
     zmath.storeMat(f32Ptr(instance_ptr)[0..16], model);
@@ -209,22 +210,22 @@ pub fn main() !void {
     const instance_cbv_desc: d3d12.CONSTANT_BUFFER_VIEW_DESC = .{ .BufferLocation = instance_resource.resource.GetGPUVirtualAddress(), .SizeInBytes = @intCast(instance_resource.buffer_size) };
     dx12.device.CreateConstantBufferView(&instance_cbv_desc, instance_descriptor.cpu_handle);
 
-    const vertex_buffer_resource = createResourceWithSize(std.unicode.utf8ToUtf16LeAllocZ(allocator, "VertexBuffer") catch unreachable, @sizeOf(Vertex) * all_vertices.items.len, .DEFAULT, dx12.device);
+    const vertex_buffer_resource = createResourceWithSize(std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "VertexBuffer") catch unreachable, @sizeOf(Vertex) * all_vertices.items.len, .DEFAULT, dx12.device);
     const vertex_srv_desc = d3d12.SHADER_RESOURCE_VIEW_DESC.initStructuredBuffer(0, @as(u32, @intCast(all_vertices.items.len)), @sizeOf(Vertex));
     const vertex_buffer_descriptor = meshlet_heap.allocate();
     dx12.device.CreateShaderResourceView(vertex_buffer_resource.resource, &vertex_srv_desc, vertex_buffer_descriptor.cpu_handle);
 
-    const index_buffer_resource = createResourceWithSize(std.unicode.utf8ToUtf16LeAllocZ(allocator, "IndexBuffer") catch unreachable, @sizeOf(u32) * all_indices.items.len, .DEFAULT, dx12.device);
+    const index_buffer_resource = createResourceWithSize(std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "IndexBuffer") catch unreachable, @sizeOf(u32) * all_indices.items.len, .DEFAULT, dx12.device);
     const index_srv_desc = d3d12.SHADER_RESOURCE_VIEW_DESC.initTypedBuffer(.R32_UINT, 0, @as(u32, @intCast(all_indices.items.len)));
     const index_buffer_descriptor = meshlet_heap.allocate();
     dx12.device.CreateShaderResourceView(index_buffer_resource.resource, &index_srv_desc, index_buffer_descriptor.cpu_handle);
 
-    const meshlet_buffer_resource = createResourceWithSize(std.unicode.utf8ToUtf16LeAllocZ(allocator, "MeshletBuffer") catch unreachable, @sizeOf(Meshlet) * all_meshlets.items.len, .DEFAULT, dx12.device);
+    const meshlet_buffer_resource = createResourceWithSize(std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "MeshletBuffer") catch unreachable, @sizeOf(Meshlet) * all_meshlets.items.len, .DEFAULT, dx12.device);
     const meshlet_srv_desc = d3d12.SHADER_RESOURCE_VIEW_DESC.initStructuredBuffer(0, @as(u32, @intCast(all_meshlets.items.len)), @sizeOf(Meshlet));
     const meshlet_buffer_descriptor = meshlet_heap.allocate();
     dx12.device.CreateShaderResourceView(meshlet_buffer_resource.resource, &meshlet_srv_desc, meshlet_buffer_descriptor.cpu_handle);
 
-    const meshlet_data_buffer_resource = createResourceWithSize(std.unicode.utf8ToUtf16LeAllocZ(allocator, "MeshletDataBuffer") catch unreachable, @sizeOf(u32) * all_meshlets_data.items.len, .DEFAULT, dx12.device);
+    const meshlet_data_buffer_resource = createResourceWithSize(std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "MeshletDataBuffer") catch unreachable, @sizeOf(u32) * all_meshlets_data.items.len, .DEFAULT, dx12.device);
     const meshlet_data_srv_desc = d3d12.SHADER_RESOURCE_VIEW_DESC.initTypedBuffer(.R32_UINT, 0, @as(u32, @intCast(all_meshlets_data.items.len)));
     const meshlet_data_buffer_descriptor = meshlet_heap.allocate();
     dx12.device.CreateShaderResourceView(meshlet_data_buffer_resource.resource, &meshlet_data_srv_desc, meshlet_data_buffer_descriptor.cpu_handle);
@@ -232,10 +233,10 @@ pub fn main() !void {
     hrPanicOnFail(dx12.command_allocators[0].Reset());
     hrPanicOnFail(dx12.command_list.Reset(dx12.command_allocators[0], null));
 
-    copyBuffer(Vertex, std.unicode.utf8ToUtf16LeAllocZ(allocator, "VertexUploadBuffer") catch unreachable, &all_vertices, &vertex_buffer_resource, &dx12);
-    copyBuffer(u32, std.unicode.utf8ToUtf16LeAllocZ(allocator, "IndexUploadBuffer") catch unreachable, &all_indices, &index_buffer_resource, &dx12);
-    copyBuffer(Meshlet, std.unicode.utf8ToUtf16LeAllocZ(allocator, "MeshletUploadBuffer") catch unreachable, &all_meshlets, &meshlet_buffer_resource, &dx12);
-    copyBuffer(u32, std.unicode.utf8ToUtf16LeAllocZ(allocator, "MeshletDataUploadBuffer") catch unreachable, &all_meshlets_data, &meshlet_data_buffer_resource, &dx12);
+    copyBuffer(Vertex, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "VertexUploadBuffer") catch unreachable, &all_vertices, &vertex_buffer_resource, &dx12);
+    copyBuffer(u32, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "IndexUploadBuffer") catch unreachable, &all_indices, &index_buffer_resource, &dx12);
+    copyBuffer(Meshlet, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "MeshletUploadBuffer") catch unreachable, &all_meshlets, &meshlet_buffer_resource, &dx12);
+    copyBuffer(u32, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "MeshletDataUploadBuffer") catch unreachable, &all_meshlets_data, &meshlet_data_buffer_resource, &dx12);
 
     hrPanicOnFail(dx12.command_list.Close());
     dx12.command_queue.ExecuteCommandLists(1, &.{@ptrCast(dx12.command_list)});
