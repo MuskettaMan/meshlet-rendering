@@ -17,68 +17,13 @@ const Camera = @import("camera.zig").Camera;
 const Vertex = zmesh_data.Vertex;
 const Mesh = zmesh_data.Mesh;
 const Meshlet = zmesh_data.Meshlet;
+const Scene = @import("scene.zig").Scene;
 
 const window_name: [:0]const u8 = "DX12 Zig";
 const content_dir = "content/";
 
-const Resource = struct {
-    resource: *d3d12.IResource,
-    buffer_size: usize,
-
-    pub fn map(self: *const Resource) *anyopaque {
-        const read_range: d3d12.RANGE = .{ .Begin = 0, .End = 0 };
-        var mapped_data: ?*anyopaque = null;
-        hrPanicOnFail(self.resource.Map(0, &read_range, &mapped_data));
-
-        return mapped_data.?;
-    }
-    pub fn unmap(self: *const Resource) void {
-        self.resource.Unmap(0, null);
-    }
-};
-
-fn f32Ptr(mapped_ptr: *anyopaque) [*]f32 {
-    return @as([*]f32, @ptrCast(@alignCast(mapped_ptr)));
-}
-
-fn createResourceWithSize(name: [:0]const u16, buffer_size: usize, heap_type: d3d12.HEAP_TYPE, device: *d3d12.IDevice9) Resource {
-    var resource: ?*d3d12.IResource = null;
-    const heap_props = d3d12.HEAP_PROPERTIES.initType(heap_type);
-    const buffer_desc = d3d12.RESOURCE_DESC.initBuffer(buffer_size);
-
-    const resource_state = if (heap_type == .UPLOAD) d3d12.RESOURCE_STATES.GENERIC_READ else d3d12.RESOURCE_STATES.COMMON;
-
-    hrPanicOnFail(device.CreateCommittedResource(&heap_props, d3d12.HEAP_FLAGS{}, &buffer_desc, resource_state, null, &d3d12.IID_IResource, @ptrCast(&resource)));
-
-    hrPanicOnFail(resource.?.SetName(name));
-
-    return .{ .resource = resource.?, .buffer_size = buffer_size };
-}
-
-fn createResource(comptime T: type, name: [:0]const u16, heap_type: d3d12.HEAP_TYPE, device: *d3d12.IDevice9, min_aligned: bool) Resource {
-    const buffer_size = if (min_aligned) (@sizeOf(T) + 255) & ~@as(u32, 255) else @sizeOf(T);
-
-    return createResourceWithSize(name, buffer_size, heap_type, device);
-}
-
-fn copyBuffer(comptime T: type, name: [:0]const u16, src_data: *const std.ArrayList(T), dest_resource: *const Resource, dx12: *Dx12State) void {
-    const upload = createResourceWithSize(name, dest_resource.buffer_size, .UPLOAD, dx12.device);
-    const mappedPtr = upload.map();
-    defer upload.unmap();
-
-    const dest = @as([*]T, @ptrCast(@alignCast(mappedPtr)));
-
-    for (src_data.items, 0..) |data_element, i| {
-        dest[i] = data_element;
-    }
-
-    var barrier = d3d12.RESOURCE_BARRIER{ .Type = .TRANSITION, .Flags = .{}, .u = .{ .Transition = .{ .pResource = dest_resource.resource, .StateBefore = .COMMON, .StateAfter = .{ .COPY_DEST = true }, .Subresource = d3d12.RESOURCE_BARRIER_ALL_SUBRESOURCES } } };
-    dx12.command_list.ResourceBarrier(1, @ptrCast(&barrier));
-    dx12.command_list.CopyBufferRegion(dest_resource.resource, 0, upload.resource, 0, upload.buffer_size);
-
-    barrier.u.Transition.StateBefore = .{ .COPY_DEST = true };
-    barrier.u.Transition.StateAfter = .GENERIC_READ;
-    dx12.command_list.ResourceBarrier(1, @ptrCast(&barrier));
+fn castPtrToSlice(comptime T: type, mapped_ptr: *anyopaque) [*]T {
+    return @as([*]T, @ptrCast(@alignCast(mapped_ptr)));
 }
 
 const RootConst = struct {
@@ -93,7 +38,11 @@ pub fn main() !void {
 
     _ = windows.SetProcessDPIAware();
 
-    const window = winUtil.createWindow(1600, 1200, &window_name);
+    var width: u32 = 1600;
+    var height: u32 = 1200;
+    const aspect_ratio = @as(f32, @floatFromInt(width)) / @as(f32, @floatFromInt(height));
+
+    const window = winUtil.createWindow(width, height, &window_name);
 
     var dx12 = Dx12State.init(window);
     defer dx12.deinit();
@@ -136,107 +85,26 @@ pub fn main() !void {
     zmesh.init(pageAllocator);
     defer zmesh.deinit();
 
-    var all_meshes = std.ArrayList(Mesh).init(pageAllocator);
-    defer all_meshes.deinit();
-    var all_vertices = std.ArrayList(Vertex).init(pageAllocator);
-    defer all_vertices.deinit();
-    var all_indices = std.ArrayList(u32).init(pageAllocator);
-    defer all_indices.deinit();
-    var all_meshlets = std.ArrayList(Meshlet).init(pageAllocator);
-    defer all_meshlets.deinit();
-    var all_meshlets_data = std.ArrayList(u32).init(pageAllocator);
-    defer all_meshlets_data.deinit();
+    var scene = try Scene.init(pageAllocator, arenaAllocator, &dx12);
+    defer scene.deinit();
 
-    //const path: [:0]const u8 = "content/Cube/Cube.gltf";
-    const path: [:0]const u8 = "content/DragonAttenuation.glb";
-    try zmesh_data.loadOptimizedMesh(pageAllocator, &path, 1, &all_meshes, &all_vertices, &all_indices, &all_meshlets, &all_meshlets_data);
+    {
+        scene.camera.position = .{ 0.0, 0.0, -10.0, 0.0 };
+        scene.camera.view = zmath.inverse(zmath.translation(scene.camera.position[0], scene.camera.position[1], scene.camera.position[2]));
+        scene.camera.proj = zmath.perspectiveFovLh(0.25 * std.math.pi, aspect_ratio, 0.01, 200.0);
+    
+        const camera_ptr = scene.camera_resource.map();
+        defer scene.camera_resource.unmap();
 
-    const root_signature: *d3d12.IRootSignature, const pipeline: *d3d12.IPipelineState = blk: {
-        const ms_cso = @embedFile("./shaders/main.ms.cso");
-        const ps_cso = @embedFile("./shaders/main.ps.cso");
-
-        var mesh_state_desc = d3d12.MESH_SHADER_PIPELINE_STATE_DESC.initDefault();
-        mesh_state_desc.RTVFormats[0] = .R8G8B8A8_UNORM;
-        mesh_state_desc.DepthStencilState = d3d12.DEPTH_STENCIL_DESC1.initDefault();
-        mesh_state_desc.DSVFormat = .D32_FLOAT;
-        mesh_state_desc.NumRenderTargets = 1;
-        mesh_state_desc.MS = .{ .pShaderBytecode = ms_cso, .BytecodeLength = ms_cso.len };
-        mesh_state_desc.PS = .{ .pShaderBytecode = ps_cso, .BytecodeLength = ps_cso.len };
-
-        var stream = d3d12.PIPELINE_MESH_STATE_STREAM.init(mesh_state_desc);
-
-        var root_signature: *d3d12.IRootSignature = undefined;
-        hrPanicOnFail(dx12.device.CreateRootSignature(0, mesh_state_desc.MS.pShaderBytecode.?, mesh_state_desc.MS.BytecodeLength, &d3d12.IID_IRootSignature, @ptrCast(&root_signature)));
-
-        var pipeline: *d3d12.IPipelineState = undefined;
-        hrPanicOnFail(dx12.device.CreatePipelineState(&d3d12.PIPELINE_STATE_STREAM_DESC{ .SizeInBytes = @sizeOf(@TypeOf(stream)), .pPipelineStateSubobjectStream = @ptrCast(&stream) }, &d3d12.IID_IPipelineState, @ptrCast(&pipeline)));
-
-        break :blk .{ root_signature, pipeline };
-    };
-    defer _ = pipeline.Release();
-    defer _ = root_signature.Release();
-
-    var width: u32 = 1600;
-    var height: u32 = 1200;
-    const aspect_ratio = @as(f32, @floatFromInt(width)) / @as(f32, @floatFromInt(height));
+        zmath.storeMat(castPtrToSlice(f32, camera_ptr)[0..16], zmath.transpose(scene.camera.view));
+        zmath.storeMat(castPtrToSlice(f32, camera_ptr)[16..32], zmath.transpose(scene.camera.proj));
+        zmath.store(castPtrToSlice(f32, camera_ptr)[32..35], scene.camera.position, 3);
+    }
 
     var model = zmath.identity();
-
-    var camera = Camera.init();
-    camera.position = .{ 0.0, 0.0, -10.0, 0.0 };
-    camera.view = zmath.inverse(zmath.translation(camera.position[0], camera.position[1], camera.position[2]));
-    camera.proj = zmath.perspectiveFovLh(0.25 * std.math.pi, aspect_ratio, 0.01, 200.0);
-
-    var camera_resource = createResource(Camera, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "CameraBuffer") catch unreachable, .UPLOAD, dx12.device, true);
-    const camera_ptr = camera_resource.map();
-    defer camera_resource.unmap();
-    zmath.storeMat(f32Ptr(camera_ptr)[0..16], zmath.transpose(camera.view));
-    zmath.storeMat(f32Ptr(camera_ptr)[16..32], zmath.transpose(camera.proj));
-    zmath.store(f32Ptr(camera_ptr)[32..35], camera.position, 3);
-
-    var instance_resource = createResource(zmath.Mat, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "InstanceBuffer") catch unreachable, .UPLOAD, dx12.device, true);
-    const instance_ptr = instance_resource.map();
-    defer instance_resource.unmap();
-    zmath.storeMat(f32Ptr(instance_ptr)[0..16], model);
-
-    var meshlet_heap = CbvSrvHeap.init(16, dx12.device);
-    defer meshlet_heap.deinit();
-
-    const camera_descriptor = meshlet_heap.allocate();
-    const camera_cbv_desc: d3d12.CONSTANT_BUFFER_VIEW_DESC = .{ .BufferLocation = camera_resource.resource.GetGPUVirtualAddress(), .SizeInBytes = @intCast(camera_resource.buffer_size) };
-    dx12.device.CreateConstantBufferView(&camera_cbv_desc, camera_descriptor.cpu_handle);
-
-    const instance_descriptor = meshlet_heap.allocate();
-    const instance_cbv_desc: d3d12.CONSTANT_BUFFER_VIEW_DESC = .{ .BufferLocation = instance_resource.resource.GetGPUVirtualAddress(), .SizeInBytes = @intCast(instance_resource.buffer_size) };
-    dx12.device.CreateConstantBufferView(&instance_cbv_desc, instance_descriptor.cpu_handle);
-
-    const vertex_buffer_resource = createResourceWithSize(std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "VertexBuffer") catch unreachable, @sizeOf(Vertex) * all_vertices.items.len, .DEFAULT, dx12.device);
-    const vertex_srv_desc = d3d12.SHADER_RESOURCE_VIEW_DESC.initStructuredBuffer(0, @as(u32, @intCast(all_vertices.items.len)), @sizeOf(Vertex));
-    const vertex_buffer_descriptor = meshlet_heap.allocate();
-    dx12.device.CreateShaderResourceView(vertex_buffer_resource.resource, &vertex_srv_desc, vertex_buffer_descriptor.cpu_handle);
-
-    const index_buffer_resource = createResourceWithSize(std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "IndexBuffer") catch unreachable, @sizeOf(u32) * all_indices.items.len, .DEFAULT, dx12.device);
-    const index_srv_desc = d3d12.SHADER_RESOURCE_VIEW_DESC.initTypedBuffer(.R32_UINT, 0, @as(u32, @intCast(all_indices.items.len)));
-    const index_buffer_descriptor = meshlet_heap.allocate();
-    dx12.device.CreateShaderResourceView(index_buffer_resource.resource, &index_srv_desc, index_buffer_descriptor.cpu_handle);
-
-    const meshlet_buffer_resource = createResourceWithSize(std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "MeshletBuffer") catch unreachable, @sizeOf(Meshlet) * all_meshlets.items.len, .DEFAULT, dx12.device);
-    const meshlet_srv_desc = d3d12.SHADER_RESOURCE_VIEW_DESC.initStructuredBuffer(0, @as(u32, @intCast(all_meshlets.items.len)), @sizeOf(Meshlet));
-    const meshlet_buffer_descriptor = meshlet_heap.allocate();
-    dx12.device.CreateShaderResourceView(meshlet_buffer_resource.resource, &meshlet_srv_desc, meshlet_buffer_descriptor.cpu_handle);
-
-    const meshlet_data_buffer_resource = createResourceWithSize(std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "MeshletDataBuffer") catch unreachable, @sizeOf(u32) * all_meshlets_data.items.len, .DEFAULT, dx12.device);
-    const meshlet_data_srv_desc = d3d12.SHADER_RESOURCE_VIEW_DESC.initTypedBuffer(.R32_UINT, 0, @as(u32, @intCast(all_meshlets_data.items.len)));
-    const meshlet_data_buffer_descriptor = meshlet_heap.allocate();
-    dx12.device.CreateShaderResourceView(meshlet_data_buffer_resource.resource, &meshlet_data_srv_desc, meshlet_data_buffer_descriptor.cpu_handle);
-
-    hrPanicOnFail(dx12.command_allocators[0].Reset());
-    hrPanicOnFail(dx12.command_list.Reset(dx12.command_allocators[0], null));
-
-    copyBuffer(Vertex, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "VertexUploadBuffer") catch unreachable, &all_vertices, &vertex_buffer_resource, &dx12);
-    copyBuffer(u32, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "IndexUploadBuffer") catch unreachable, &all_indices, &index_buffer_resource, &dx12);
-    copyBuffer(Meshlet, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "MeshletUploadBuffer") catch unreachable, &all_meshlets, &meshlet_buffer_resource, &dx12);
-    copyBuffer(u32, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "MeshletDataUploadBuffer") catch unreachable, &all_meshlets_data, &meshlet_data_buffer_resource, &dx12);
+    const instance_ptr = scene.instance_resource.map();
+    defer scene.instance_resource.unmap();
+    zmath.storeMat(castPtrToSlice(f32, instance_ptr)[0..16], model);
 
     hrPanicOnFail(dx12.command_list.Close());
     dx12.command_queue.ExecuteCommandLists(1, &.{@ptrCast(dx12.command_list)});
@@ -308,7 +176,7 @@ pub fn main() !void {
         model = zmath.mul(model, zmath.rotationY(total_time));
         model = zmath.mul(model, zmath.translation(0.0, -2.5, 0.0));
 
-        zmath.storeMat(f32Ptr(instance_ptr)[0..16], zmath.transpose(model));
+        zmath.storeMat(castPtrToSlice(f32, instance_ptr)[0..16], zmath.transpose(model));
 
         const command_allocator = dx12.command_allocators[dx12.frame_index];
 
@@ -353,22 +221,22 @@ pub fn main() !void {
         }
 
         dx12.command_list.IASetPrimitiveTopology(.TRIANGLELIST);
-        dx12.command_list.SetPipelineState(pipeline);
-        dx12.command_list.SetGraphicsRootSignature(root_signature);
+        dx12.command_list.SetPipelineState(scene.pipeline);
+        dx12.command_list.SetGraphicsRootSignature(scene.root_signature);
 
-        dx12.command_list.SetGraphicsRootConstantBufferView(0, camera_resource.resource.GetGPUVirtualAddress());
-        dx12.command_list.SetGraphicsRootConstantBufferView(1, instance_resource.resource.GetGPUVirtualAddress());
+        dx12.command_list.SetGraphicsRootConstantBufferView(0, scene.camera_resource.resource.GetGPUVirtualAddress());
+        dx12.command_list.SetGraphicsRootConstantBufferView(1, scene.instance_resource.resource.GetGPUVirtualAddress());
 
-        const heaps = [_]*d3d12.IDescriptorHeap{meshlet_heap.heap};
+        const heaps = [_]*d3d12.IDescriptorHeap{scene.meshlet_heap.heap};
         dx12.command_list.SetDescriptorHeaps(1, &heaps);
-        dx12.command_list.SetGraphicsRootDescriptorTable(3, vertex_buffer_descriptor.gpu_handle);
+        dx12.command_list.SetGraphicsRootDescriptorTable(3, scene.vertex_buffer_descriptor.gpu_handle);
 
-        var pending_meshlets = all_meshes.items[0].num_meshlets;
+        var pending_meshlets = scene.all_meshes.items[0].num_meshlets;
         while (pending_meshlets > 0) {
             const meshlet_count = @min(pending_meshlets, std.math.maxInt(u16));
-            const offset = all_meshes.items[0].num_meshlets - pending_meshlets;
+            const offset = scene.all_meshes.items[0].num_meshlets - pending_meshlets;
 
-            dx12.command_list.SetGraphicsRoot32BitConstants(2, 3, &.{ all_meshes.items[0].vertex_offset, all_meshes.items[0].index_offset + offset, @intFromEnum(drawMode) }, 0);
+            dx12.command_list.SetGraphicsRoot32BitConstants(2, 3, &.{ scene.all_meshes.items[0].vertex_offset, scene.all_meshes.items[0].index_offset + offset, @intFromEnum(drawMode) }, 0);
             dx12.command_list.DispatchMesh(meshlet_count, 1, 1);
 
             pending_meshlets -= meshlet_count;
