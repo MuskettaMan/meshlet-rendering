@@ -32,7 +32,7 @@ comptime {
     assert(@alignOf(Meshlet) == 8);
 }
 
-pub fn loadOptimizedMesh(allocator: std.mem.Allocator, path: *const [:0]const u8, mesh_index: u32, all_meshes: *std.ArrayList(Mesh), all_vertices: *std.ArrayList(Vertex), all_indices: *std.ArrayList(u32), all_meshlets: *std.ArrayList(Meshlet), all_meshlets_data: *std.ArrayList(u32)) !void {
+pub fn loadOptimizedMesh(allocator: std.mem.Allocator, path: *const [:0]const u8, all_meshes: *std.ArrayList(Mesh), all_vertices: *std.ArrayList(Vertex), all_indices: *std.ArrayList(u32), all_meshlets: *std.ArrayList(Meshlet), all_meshlets_data: *std.ArrayList(u32)) !void {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
 
@@ -45,7 +45,9 @@ pub fn loadOptimizedMesh(allocator: std.mem.Allocator, path: *const [:0]const u8
     var mesh_positions = std.ArrayList([3]f32).init(arenaAllocator);
     var mesh_normals = std.ArrayList([3]f32).init(arenaAllocator);
 
-    zcgltf.appendMeshPrimitive(data, mesh_index, 0, &mesh_indices, &mesh_positions, &mesh_normals, null, null) catch unreachable;
+    for (0..data.meshes_count) |i| {
+        zcgltf.appendMeshPrimitive(data, @intCast(i), 0, &mesh_indices, &mesh_positions, &mesh_normals, null, null) catch unreachable;
+    }
 
     var mesh_vertices = std.ArrayList(Vertex).init(arenaAllocator);
     try mesh_vertices.resize(mesh_positions.items.len);

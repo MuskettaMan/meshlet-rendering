@@ -18,6 +18,10 @@ const Vertex = zmesh_data.Vertex;
 const Mesh = zmesh_data.Mesh;
 const Meshlet = zmesh_data.Meshlet;
 const Scene = @import("scene.zig").Scene;
+const Renderer = @import("renderer.zig").Renderer;
+const MeshletPass = @import("meshlet_pass.zig");
+const MeshletResources = @import("meshlet_resources.zig");
+const Geometry = @import("geometry.zig");
 
 const window_name: [:0]const u8 = "DX12 Zig";
 const content_dir = "content/";
@@ -38,41 +42,32 @@ pub fn main() !void {
 
     _ = windows.SetProcessDPIAware();
 
+    const pageAllocator = std.heap.page_allocator;
+
     var width: u32 = 1600;
     var height: u32 = 1200;
     const aspect_ratio = @as(f32, @floatFromInt(width)) / @as(f32, @floatFromInt(height));
 
     const window = winUtil.createWindow(width, height, &window_name);
 
-    var dx12 = Dx12State.init(window);
-    defer dx12.deinit();
+    zmesh.init(pageAllocator);
+    defer zmesh.deinit();
 
-    var options7: d3d12.FEATURE_DATA_D3D12_OPTIONS7 = undefined;
-    const res = dx12.device.CheckFeatureSupport(.OPTIONS7, &options7, @sizeOf(d3d12.FEATURE_DATA_D3D12_OPTIONS7));
-    if (options7.MeshShaderTier == .NOT_SUPPORTED or res != windows.S_OK) {
-        _ = windows.MessageBoxA(window, "This applications requires graphics card that supports Mesh Shader " ++
-            "(NVIDIA GeForce Turing or newer, AMD Radeon RX 6000 or newer).", "No DirectX 12 Mesh Shader support", windows.MB_OK | windows.MB_ICONERROR);
-        return;
-    }
-
-    const pageAllocator = std.heap.page_allocator;
-    var arena = std.heap.ArenaAllocator.init(pageAllocator);
-    defer arena.deinit();
-
-    const arenaAllocator = arena.allocator();
+    var renderer = try Renderer.init(pageAllocator, window);
+    defer renderer.deinit();
 
     zgui.init(pageAllocator);
     defer zgui.deinit();
 
     _ = zgui.io.addFontFromFile(content_dir ++ "Roboto-Medium.ttf", 16.0);
 
-    var zgui_heap = CbvSrvHeap.init(1, dx12.device);
+    var zgui_heap = CbvSrvHeap.init(1, renderer.dx12.device);
     defer zgui_heap.deinit();
     const font_descriptor = zgui_heap.allocate();
 
     zgui.backend.init(window, .{
-        .device = dx12.device,
-        .command_queue = dx12.command_queue,
+        .device = renderer.dx12.device,
+        .command_queue = renderer.dx12.command_queue,
         .num_frames_in_flight = Dx12State.num_frames,
         .rtv_format = @intFromEnum(Dx12State.rtv_format),
         .dsv_format = @intFromEnum(Dx12State.dsv_format),
@@ -82,33 +77,30 @@ pub fn main() !void {
     });
     defer zgui.backend.deinit();
 
-    zmesh.init(pageAllocator);
-    defer zmesh.deinit();
-
-    var scene = try Scene.init(pageAllocator, arenaAllocator, &dx12);
+    var scene = try Scene.init();
     defer scene.deinit();
 
     {
         scene.camera.position = .{ 0.0, 0.0, -10.0, 0.0 };
         scene.camera.view = zmath.inverse(zmath.translation(scene.camera.position[0], scene.camera.position[1], scene.camera.position[2]));
         scene.camera.proj = zmath.perspectiveFovLh(0.25 * std.math.pi, aspect_ratio, 0.01, 200.0);
-    
-        const camera_ptr = scene.camera_resource.map();
-        defer scene.camera_resource.unmap();
 
+        const camera_ptr = renderer.camera_resource.map();
+        defer renderer.camera_resource.unmap();
+
+        // TODO: Simplify and clarify this code.
         zmath.storeMat(castPtrToSlice(f32, camera_ptr)[0..16], zmath.transpose(scene.camera.view));
         zmath.storeMat(castPtrToSlice(f32, camera_ptr)[16..32], zmath.transpose(scene.camera.proj));
         zmath.store(castPtrToSlice(f32, camera_ptr)[32..35], scene.camera.position, 3);
     }
 
-    var model = zmath.identity();
-    const instance_ptr = scene.instance_resource.map();
-    defer scene.instance_resource.unmap();
-    zmath.storeMat(castPtrToSlice(f32, instance_ptr)[0..16], model);
+    const instance_ptr = renderer.instance_resource.map();
+    defer renderer.instance_resource.unmap();
+    zmath.storeMat(castPtrToSlice(f32, instance_ptr)[0..16], scene.model);
 
-    hrPanicOnFail(dx12.command_list.Close());
-    dx12.command_queue.ExecuteCommandLists(1, &.{@ptrCast(dx12.command_list)});
-    dx12.flush();
+    hrPanicOnFail(renderer.dx12.command_list.Close());
+    renderer.dx12.command_queue.ExecuteCommandLists(1, &.{@ptrCast(renderer.dx12.command_list)});
+    renderer.dx12.flush();
 
     var window_rect: windows.RECT = undefined;
     _ = windows.GetClientRect(window, &window_rect);
@@ -143,18 +135,18 @@ pub fn main() !void {
                 rect.bottom = @max(1, rect.bottom);
                 std.log.info("Window resized to {d}x{d}", .{ rect.right, rect.bottom });
 
-                dx12.flush();
+                renderer.dx12.flush();
 
-                for (dx12.swap_chain_textures) |texture| _ = texture.Release();
+                for (renderer.dx12.swap_chain_textures) |texture| _ = texture.Release();
 
-                hrPanicOnFail(dx12.swap_chain.ResizeBuffers(0, 0, 0, .UNKNOWN, .{}));
+                hrPanicOnFail(renderer.dx12.swap_chain.ResizeBuffers(0, 0, 0, .UNKNOWN, .{}));
 
-                for (&dx12.swap_chain_textures, 0..) |*texture, i| {
-                    hrPanicOnFail(dx12.swap_chain.GetBuffer(@intCast(i), &d3d12.IID_IResource, @ptrCast(&texture.*))); // TODO: try remove &x.*
+                for (&renderer.dx12.swap_chain_textures, 0..) |*texture, i| {
+                    hrPanicOnFail(renderer.dx12.swap_chain.GetBuffer(@intCast(i), &d3d12.IID_IResource, @ptrCast(&texture.*))); // TODO: try remove &x.*
                 }
 
-                for (&dx12.swap_chain_textures, 0..) |texture, i| {
-                    dx12.device.CreateRenderTargetView(texture, null, .{ .ptr = dx12.rtv_heap_start.ptr + i * dx12.device.GetDescriptorHandleIncrementSize(.RTV) });
+                for (&renderer.dx12.swap_chain_textures, 0..) |texture, i| {
+                    renderer.dx12.device.CreateRenderTargetView(texture, null, .{ .ptr = renderer.dx12.rtv_heap_start.ptr + i * renderer.dx12.device.GetDescriptorHandleIncrementSize(.RTV) });
                 }
             }
 
@@ -171,19 +163,19 @@ pub fn main() !void {
         total_time += delta_time;
 
         const scale = 0.6;
-        model = zmath.scaling(scale, scale, scale);
-        model = zmath.mul(model, zmath.rotationX(std.math.pi / 2.0));
-        model = zmath.mul(model, zmath.rotationY(total_time));
-        model = zmath.mul(model, zmath.translation(0.0, -2.5, 0.0));
+        scene.model = zmath.scaling(scale, scale, scale);
+        scene.model = zmath.mul(scene.model, zmath.rotationX(std.math.pi / 2.0));
+        scene.model = zmath.mul(scene.model, zmath.rotationY(total_time));
+        scene.model = zmath.mul(scene.model, zmath.translation(0.0, -2.5, 0.0));
 
-        zmath.storeMat(castPtrToSlice(f32, instance_ptr)[0..16], zmath.transpose(model));
+        zmath.storeMat(castPtrToSlice(f32, instance_ptr)[0..16], zmath.transpose(scene.model));
 
-        const command_allocator = dx12.command_allocators[dx12.frame_index];
+        const command_allocator = renderer.dx12.command_allocators[renderer.dx12.frame_index];
 
         hrPanicOnFail(command_allocator.Reset());
-        hrPanicOnFail(dx12.command_list.Reset(command_allocator, null));
+        hrPanicOnFail(renderer.dx12.command_list.Reset(command_allocator, null));
 
-        dx12.command_list.RSSetViewports(1, &.{.{
+        renderer.dx12.command_list.RSSetViewports(1, &.{.{
             .TopLeftX = 0.0,
             .TopLeftY = 0.0,
             .Width = @floatFromInt(width),
@@ -191,26 +183,26 @@ pub fn main() !void {
             .MinDepth = 0.0,
             .MaxDepth = 1.0,
         }});
-        dx12.command_list.RSSetScissorRects(1, &.{.{
+        renderer.dx12.command_list.RSSetScissorRects(1, &.{.{
             .left = 0,
             .top = 0,
             .right = @intCast(width),
             .bottom = @intCast(height),
         }});
 
-        const back_buffer_index = dx12.swap_chain.GetCurrentBackBufferIndex();
-        const back_buffer_descriptor = d3d12.CPU_DESCRIPTOR_HANDLE{ .ptr = dx12.rtv_heap_start.ptr + back_buffer_index * dx12.device.GetDescriptorHandleIncrementSize(.RTV) };
+        const back_buffer_index = renderer.dx12.swap_chain.GetCurrentBackBufferIndex();
+        const back_buffer_descriptor = d3d12.CPU_DESCRIPTOR_HANDLE{ .ptr = renderer.dx12.rtv_heap_start.ptr + back_buffer_index * renderer.dx12.device.GetDescriptorHandleIncrementSize(.RTV) };
 
-        dx12.command_list.ResourceBarrier(1, &.{.{ .Type = .TRANSITION, .Flags = .{}, .u = .{ .Transition = .{
-            .pResource = dx12.swap_chain_textures[back_buffer_index],
+        renderer.dx12.command_list.ResourceBarrier(1, &.{.{ .Type = .TRANSITION, .Flags = .{}, .u = .{ .Transition = .{
+            .pResource = renderer.dx12.swap_chain_textures[back_buffer_index],
             .Subresource = d3d12.RESOURCE_BARRIER_ALL_SUBRESOURCES,
             .StateBefore = d3d12.RESOURCE_STATES.PRESENT,
             .StateAfter = .{ .RENDER_TARGET = true },
         } } }});
 
-        dx12.command_list.OMSetRenderTargets(1, &.{back_buffer_descriptor}, windows.TRUE, &dx12.depth_heap_handle);
-        dx12.command_list.ClearDepthStencilView(dx12.depth_heap_handle, .{ .DEPTH = true }, 1.0, 0, 0, null);
-        dx12.command_list.ClearRenderTargetView(back_buffer_descriptor, &.{ 0.2, 0.2, 0.8, 1.0 }, 0, null);
+        renderer.dx12.command_list.OMSetRenderTargets(1, &.{back_buffer_descriptor}, windows.TRUE, &renderer.dx12.depth_heap_handle);
+        renderer.dx12.command_list.ClearDepthStencilView(renderer.dx12.depth_heap_handle, .{ .DEPTH = true }, 1.0, 0, 0, null);
+        renderer.dx12.command_list.ClearRenderTargetView(back_buffer_descriptor, &.{ 0.2, 0.2, 0.8, 1.0 }, 0, null);
 
         zgui.backend.newFrame(@intCast(width), @intCast(height));
 
@@ -220,47 +212,51 @@ pub fn main() !void {
             zgui.end();
         }
 
-        dx12.command_list.IASetPrimitiveTopology(.TRIANGLELIST);
-        dx12.command_list.SetPipelineState(scene.pipeline);
-        dx12.command_list.SetGraphicsRootSignature(scene.root_signature);
+        const geometry = renderer.geometry;
+        const meshlet_pass = renderer.meshlet_pass;
+        const meshlet_resources = meshlet_pass.resources;
 
-        dx12.command_list.SetGraphicsRootConstantBufferView(0, scene.camera_resource.resource.GetGPUVirtualAddress());
-        dx12.command_list.SetGraphicsRootConstantBufferView(1, scene.instance_resource.resource.GetGPUVirtualAddress());
+        renderer.dx12.command_list.IASetPrimitiveTopology(.TRIANGLELIST);
+        renderer.dx12.command_list.SetPipelineState(meshlet_pass.pipeline);
+        renderer.dx12.command_list.SetGraphicsRootSignature(meshlet_pass.root_signature);
 
-        const heaps = [_]*d3d12.IDescriptorHeap{scene.meshlet_heap.heap};
-        dx12.command_list.SetDescriptorHeaps(1, &heaps);
-        dx12.command_list.SetGraphicsRootDescriptorTable(3, scene.vertex_buffer_descriptor.gpu_handle);
+        renderer.dx12.command_list.SetGraphicsRootConstantBufferView(0, renderer.camera_resource.resource.GetGPUVirtualAddress());
+        renderer.dx12.command_list.SetGraphicsRootConstantBufferView(1, renderer.instance_resource.resource.GetGPUVirtualAddress());
 
-        var pending_meshlets = scene.all_meshes.items[0].num_meshlets;
+        const heaps = [_]*d3d12.IDescriptorHeap{meshlet_resources.heap.heap};
+        renderer.dx12.command_list.SetDescriptorHeaps(1, &heaps);
+        renderer.dx12.command_list.SetGraphicsRootDescriptorTable(3, meshlet_resources.vertex_buffer_descriptor.gpu_handle);
+
+        var pending_meshlets = geometry.meshes.items[0].num_meshlets;
         while (pending_meshlets > 0) {
             const meshlet_count = @min(pending_meshlets, std.math.maxInt(u16));
-            const offset = scene.all_meshes.items[0].num_meshlets - pending_meshlets;
+            const offset = geometry.meshes.items[0].num_meshlets - pending_meshlets;
 
-            dx12.command_list.SetGraphicsRoot32BitConstants(2, 3, &.{ scene.all_meshes.items[0].vertex_offset, scene.all_meshes.items[0].index_offset + offset, @intFromEnum(drawMode) }, 0);
-            dx12.command_list.DispatchMesh(meshlet_count, 1, 1);
+            renderer.dx12.command_list.SetGraphicsRoot32BitConstants(2, 3, &.{ geometry.meshes.items[0].vertex_offset, geometry.meshes.items[0].index_offset + offset, @intFromEnum(drawMode) }, 0);
+            renderer.dx12.command_list.DispatchMesh(meshlet_count, 1, 1);
 
             pending_meshlets -= meshlet_count;
         }
 
         const zgui_heaps = [_]*d3d12.IDescriptorHeap{zgui_heap.heap};
-        dx12.command_list.SetDescriptorHeaps(1, &zgui_heaps);
-        zgui.backend.draw(dx12.command_list);
+        renderer.dx12.command_list.SetDescriptorHeaps(1, &zgui_heaps);
+        zgui.backend.draw(renderer.dx12.command_list);
 
-        dx12.command_list.ResourceBarrier(1, &.{.{ .Type = .TRANSITION, .Flags = .{}, .u = .{ .Transition = .{
-            .pResource = dx12.swap_chain_textures[back_buffer_index],
+        renderer.dx12.command_list.ResourceBarrier(1, &.{.{ .Type = .TRANSITION, .Flags = .{}, .u = .{ .Transition = .{
+            .pResource = renderer.dx12.swap_chain_textures[back_buffer_index],
             .Subresource = d3d12.RESOURCE_BARRIER_ALL_SUBRESOURCES,
             .StateBefore = .{ .RENDER_TARGET = true },
             .StateAfter = d3d12.RESOURCE_STATES.PRESENT,
         } } }});
 
-        hrPanicOnFail(dx12.command_list.Close());
+        hrPanicOnFail(renderer.dx12.command_list.Close());
 
-        dx12.command_queue.ExecuteCommandLists(1, &.{@ptrCast(dx12.command_list)});
+        renderer.dx12.command_queue.ExecuteCommandLists(1, &.{@ptrCast(renderer.dx12.command_list)});
 
-        dx12.present();
+        renderer.dx12.present();
     }
 
-    dx12.flush();
+    renderer.dx12.flush();
 }
 
 const DrawMode = enum { Wireframe, Shaded };

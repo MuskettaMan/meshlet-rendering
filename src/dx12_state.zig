@@ -45,6 +45,8 @@ pub const CbvSrvHeap = struct {
     }
 };
 
+pub const Dx12StateError = error{NotSupported};
+
 pub const Dx12State = struct {
     dxgi_factory: *dxgi.IFactory6,
     device: *d3d12.IDevice9,
@@ -73,7 +75,7 @@ pub const Dx12State = struct {
     pub const rtv_format = dxgi.FORMAT.R8G8B8A8_UNORM;
     pub const dsv_format = dxgi.FORMAT.D32_FLOAT;
 
-    pub fn init(window: windows.HWND) Dx12State {
+    pub fn init(window: windows.HWND) Dx12StateError!Dx12State {
         var dxgi_factory: *dxgi.IFactory6 = undefined;
 
         hrPanicOnFail(dxgi.CreateDXGIFactory2(0, &dxgi.IID_IFactory6, @ptrCast(&dxgi_factory)));
@@ -98,7 +100,7 @@ pub const Dx12State = struct {
         if (d3d12.CreateDevice(@ptrCast(adapter), .@"11_0", &d3d12.IID_IDevice9, @ptrCast(&device)) != windows.S_OK) {
             _ = windows.MessageBoxA(window, "Failed to create Direct3D 12 Device. This applications requires graphics card " ++
                 "with DirectX 12 Feature Level 11.0 support.", "Your graphics card driver may be old", windows.MB_OK | windows.MB_ICONERROR);
-            windows.ExitProcess(0);
+            return Dx12StateError.NotSupported;
         }
         std.log.info("D3D12 device created", .{});
 
@@ -192,6 +194,15 @@ pub const Dx12State = struct {
         hrPanicOnFail(device.CreateCommandList(0, .DIRECT, command_allocators[0], null, &d3d12.IID_IGraphicsCommandList6, @ptrCast(&command_list)));
         hrPanicOnFail(command_list.Close());
 
+        var options7: d3d12.FEATURE_DATA_D3D12_OPTIONS7 = undefined;
+        const res = device.CheckFeatureSupport(.OPTIONS7, &options7, @sizeOf(d3d12.FEATURE_DATA_D3D12_OPTIONS7));
+        if (options7.MeshShaderTier == .NOT_SUPPORTED or res != windows.S_OK) {
+            _ = windows.MessageBoxA(window, "This applications requires graphics card that supports Mesh Shader " ++
+                "(NVIDIA GeForce Turing or newer, AMD Radeon RX 6000 or newer).", "No DirectX 12 Mesh Shader support", windows.MB_OK | windows.MB_ICONERROR);
+
+            return Dx12StateError.NotSupported;
+        }
+
         return .{
             .dxgi_factory = dxgi_factory,
             .device = device,
@@ -264,6 +275,10 @@ pub const Resource = struct {
     pub fn unmap(self: *const Resource) void {
         self.resource.Unmap(0, null);
     }
+
+    pub fn deinit(self: *const Resource) void {
+        _ = self.resource.Release();
+    }
 };
 
 pub fn createResourceWithSize(name: [:0]const u16, buffer_size: usize, heap_type: d3d12.HEAP_TYPE, device: *d3d12.IDevice9) Resource {
@@ -286,7 +301,7 @@ pub fn createResource(comptime T: type, name: [:0]const u16, heap_type: d3d12.HE
     return createResourceWithSize(name, buffer_size, heap_type, device);
 }
 
-pub fn copyBuffer(comptime T: type, name: [:0]const u16, src_data: *const std.ArrayList(T), dest_resource: *const Resource, dx12: *Dx12State) void {
+pub fn copyBuffer(comptime T: type, name: [:0]const u16, src_data: *const std.ArrayList(T), dest_resource: *const Resource, dx12: *const Dx12State) void {
     const upload = createResourceWithSize(name, dest_resource.buffer_size, .UPLOAD, dx12.device);
     const mappedPtr = upload.map();
     defer upload.unmap();
