@@ -41,15 +41,10 @@ pub const Scene = struct {
 
     pub fn init(allocator: std.mem.Allocator, arenaAllocator: std.mem.Allocator, dx12: *Dx12State) !Scene {
         var all_meshes = std.ArrayList(mesh_data.Mesh).init(allocator);
-        defer all_meshes.deinit();
         var all_vertices = std.ArrayList(mesh_data.Vertex).init(allocator);
-        defer all_vertices.deinit();
         var all_indices = std.ArrayList(u32).init(allocator);
-        defer all_indices.deinit();
         var all_meshlets = std.ArrayList(mesh_data.Meshlet).init(allocator);
-        defer all_meshlets.deinit();
         var all_meshlets_data = std.ArrayList(u32).init(allocator);
-        defer all_meshlets_data.deinit();
 
         //const path: [:0]const u8 = "content/Cube/Cube.gltf";
         const path: [:0]const u8 = "content/DragonAttenuation.glb";
@@ -77,8 +72,6 @@ pub const Scene = struct {
 
             break :blk .{ root_signature, pipeline };
         };
-        defer _ = pipeline.Release();
-        defer _ = root_signature.Release();
 
         const camera = Camera.init();
 
@@ -87,7 +80,6 @@ pub const Scene = struct {
         var instance_resource = dx12_state.createResource(zmath.Mat, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "InstanceBuffer") catch unreachable, .UPLOAD, dx12.device, true);
 
         var meshlet_heap = CbvSrvHeap.init(16, dx12.device);
-        defer meshlet_heap.deinit();
 
         const camera_descriptor = meshlet_heap.allocate();
         const camera_cbv_desc: d3d12.CONSTANT_BUFFER_VIEW_DESC = .{ .BufferLocation = camera_resource.resource.GetGPUVirtualAddress(), .SizeInBytes = @intCast(camera_resource.buffer_size) };
@@ -151,7 +143,15 @@ pub const Scene = struct {
     }
 
     pub fn deinit(self: *Scene) void {
-        _ = self;
-        std.debug.panic("Not implemented", .{});
+        _ = self.pipeline.Release();
+        _ = self.root_signature.Release();
+
+        self.meshlet_heap.deinit();
+
+        self.all_meshes.deinit();
+        self.all_vertices.deinit();
+        self.all_indices.deinit();
+        self.all_meshlets.deinit();
+        self.all_meshlets_data.deinit();
     }
 };
