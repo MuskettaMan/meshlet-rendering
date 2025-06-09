@@ -249,3 +249,59 @@ pub const Dx12State = struct {
         windows.WaitForSingleObject(dx12.frame_fence_event, windows.INFINITE) catch {};
     }
 };
+
+pub const Resource = struct {
+    resource: *d3d12.IResource,
+    buffer_size: usize,
+
+    pub fn map(self: *const Resource) *anyopaque {
+        const read_range: d3d12.RANGE = .{ .Begin = 0, .End = 0 };
+        var mapped_data: ?*anyopaque = null;
+        hrPanicOnFail(self.resource.Map(0, &read_range, &mapped_data));
+
+        return mapped_data.?;
+    }
+    pub fn unmap(self: *const Resource) void {
+        self.resource.Unmap(0, null);
+    }
+};
+
+pub fn createResourceWithSize(name: [:0]const u16, buffer_size: usize, heap_type: d3d12.HEAP_TYPE, device: *d3d12.IDevice9) Resource {
+    var resource: ?*d3d12.IResource = null;
+    const heap_props = d3d12.HEAP_PROPERTIES.initType(heap_type);
+    const buffer_desc = d3d12.RESOURCE_DESC.initBuffer(buffer_size);
+
+    const resource_state = if (heap_type == .UPLOAD) d3d12.RESOURCE_STATES.GENERIC_READ else d3d12.RESOURCE_STATES.COMMON;
+
+    hrPanicOnFail(device.CreateCommittedResource(&heap_props, d3d12.HEAP_FLAGS{}, &buffer_desc, resource_state, null, &d3d12.IID_IResource, @ptrCast(&resource)));
+
+    hrPanicOnFail(resource.?.SetName(name));
+
+    return .{ .resource = resource.?, .buffer_size = buffer_size };
+}
+
+pub fn createResource(comptime T: type, name: [:0]const u16, heap_type: d3d12.HEAP_TYPE, device: *d3d12.IDevice9, min_aligned: bool) Resource {
+    const buffer_size = if (min_aligned) (@sizeOf(T) + 255) & ~@as(u32, 255) else @sizeOf(T);
+
+    return createResourceWithSize(name, buffer_size, heap_type, device);
+}
+
+pub fn copyBuffer(comptime T: type, name: [:0]const u16, src_data: *const std.ArrayList(T), dest_resource: *const Resource, dx12: *Dx12State) void {
+    const upload = createResourceWithSize(name, dest_resource.buffer_size, .UPLOAD, dx12.device);
+    const mappedPtr = upload.map();
+    defer upload.unmap();
+
+    const dest = @as([*]T, @ptrCast(@alignCast(mappedPtr)));
+
+    for (src_data.items, 0..) |data_element, i| {
+        dest[i] = data_element;
+    }
+
+    var barrier = d3d12.RESOURCE_BARRIER{ .Type = .TRANSITION, .Flags = .{}, .u = .{ .Transition = .{ .pResource = dest_resource.resource, .StateBefore = .COMMON, .StateAfter = .{ .COPY_DEST = true }, .Subresource = d3d12.RESOURCE_BARRIER_ALL_SUBRESOURCES } } };
+    dx12.command_list.ResourceBarrier(1, @ptrCast(&barrier));
+    dx12.command_list.CopyBufferRegion(dest_resource.resource, 0, upload.resource, 0, upload.buffer_size);
+
+    barrier.u.Transition.StateBefore = .{ .COPY_DEST = true };
+    barrier.u.Transition.StateAfter = .GENERIC_READ;
+    dx12.command_list.ResourceBarrier(1, @ptrCast(&barrier));
+}
