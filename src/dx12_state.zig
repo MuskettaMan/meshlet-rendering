@@ -301,8 +301,8 @@ pub fn createResource(comptime T: type, name: [:0]const u16, heap_type: d3d12.HE
     return createResourceWithSize(name, buffer_size, heap_type, device);
 }
 
-pub fn copyBuffer(comptime T: type, name: [:0]const u16, src_data: *const std.ArrayList(T), dest_resource: *const Resource, dx12: *const Dx12State) void {
-    const upload = createResourceWithSize(name, dest_resource.buffer_size, .UPLOAD, dx12.device);
+pub fn copyBuffer(comptime T: type, name: [:0]const u16, src_data: *const std.ArrayList(T), dest_resource: *const Resource, offset: usize, dx12: *Dx12State) void {
+    const upload = createResourceWithSize(name, @sizeOf(T) * src_data.items.len, .UPLOAD, dx12.device);
     const mappedPtr = upload.map();
     defer upload.unmap();
 
@@ -314,9 +314,11 @@ pub fn copyBuffer(comptime T: type, name: [:0]const u16, src_data: *const std.Ar
 
     var barrier = d3d12.RESOURCE_BARRIER{ .Type = .TRANSITION, .Flags = .{}, .u = .{ .Transition = .{ .pResource = dest_resource.resource, .StateBefore = .COMMON, .StateAfter = .{ .COPY_DEST = true }, .Subresource = d3d12.RESOURCE_BARRIER_ALL_SUBRESOURCES } } };
     dx12.command_list.ResourceBarrier(1, @ptrCast(&barrier));
-    dx12.command_list.CopyBufferRegion(dest_resource.resource, 0, upload.resource, 0, upload.buffer_size);
+    dx12.command_list.CopyBufferRegion(dest_resource.resource, offset, upload.resource, 0, upload.buffer_size);
 
     barrier.u.Transition.StateBefore = .{ .COPY_DEST = true };
     barrier.u.Transition.StateAfter = .GENERIC_READ;
     dx12.command_list.ResourceBarrier(1, @ptrCast(&barrier));
+
+    dx12.flush();
 }

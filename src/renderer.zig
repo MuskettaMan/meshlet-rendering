@@ -11,6 +11,8 @@ const Resource = @import("dx12_state.zig").Resource;
 const Descriptor = @import("dx12_state.zig").Descriptor;
 const Camera = @import("camera.zig").Camera;
 const zmath = @import("zmath");
+const zmesh = @import("zmesh");
+const zcgltf = zmesh.io.zcgltf;
 
 pub const Renderer = struct {
     dx12: Dx12State,
@@ -29,7 +31,7 @@ pub const Renderer = struct {
         defer arena.deinit();
         const arenaAllocator = arena.allocator();
 
-        const dx12 = Dx12State.init(window) catch {
+        var dx12 = Dx12State.init(window) catch {
             windows.ExitProcess(0);
         };
 
@@ -37,7 +39,13 @@ pub const Renderer = struct {
         defer paths.deinit();
         try paths.append("content/DragonAttenuation.glb");
 
-        const geometry = try Geometry.init(allocator, &paths, &dx12);
+        const data = zcgltf.parseAndLoadFile(paths.items[0]) catch unreachable;
+        defer zcgltf.free(data);
+
+        var geometry = try Geometry.init(allocator, &dx12);
+
+        try geometry.loadMesh(allocator, data);
+
         const meshlet_pass = MeshletPass.init(&dx12, &geometry);
 
         var camera_resource = dx12_state.createResource(Camera, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "CameraBuffer") catch unreachable, .UPLOAD, dx12.device, true);
