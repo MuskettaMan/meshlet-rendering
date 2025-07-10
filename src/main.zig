@@ -227,15 +227,9 @@ pub fn main() !void {
         renderer.dx12.command_list.SetDescriptorHeaps(1, &heaps);
         renderer.dx12.command_list.SetGraphicsRootDescriptorTable(3, meshlet_resources.vertex_buffer_descriptor.gpu_handle);
 
-        var pending_meshlets = geometry.meshes.items[0].num_meshlets;
-        while (pending_meshlets > 0) {
-            const meshlet_count = @min(pending_meshlets, std.math.maxInt(u16));
-            const offset = geometry.meshes.items[0].num_meshlets - pending_meshlets;
-
-            renderer.dx12.command_list.SetGraphicsRoot32BitConstants(2, 3, &.{ geometry.meshes.items[0].vertex_offset, geometry.meshes.items[0].index_offset + offset, @intFromEnum(drawMode) }, 0);
-            renderer.dx12.command_list.DispatchMesh(meshlet_count, 1, 1);
-
-            pending_meshlets -= meshlet_count;
+        for (geometry.meshes.items) |*mesh| {
+            renderer.dx12.command_list.SetGraphicsRoot32BitConstants(2, 3, &.{ mesh.vertex_offset, mesh.meshlet_offset, @intFromEnum(drawMode) }, 0);
+            renderer.dx12.command_list.DispatchMesh(mesh.num_meshlets, 1, 1);
         }
 
         const zgui_heaps = [_]*d3d12.IDescriptorHeap{zgui_heap.heap};
