@@ -46,7 +46,15 @@ pub fn processWindowMessage(window: windows.HWND, message: windows.UINT, wparam:
     return windows.DefWindowProcA(window, message, wparam, lparam);
 }
 
-pub fn createWindow(width: u32, height: u32, name: *const [:0]const u8) windows.HWND {
+pub const Window = struct {
+    handle: windows.HWND,
+    width: u32,
+    height: u32,
+    aspect_ratio: f32,
+    rect: windows.RECT,
+};
+
+pub fn createWindow(width: u32, height: u32, name: *const [:0]const u8) Window {
     const winclass = windows.WNDCLASSEXA{
         .style = 0,
         .lpfnWndProc = processWindowMessage,
@@ -74,9 +82,17 @@ pub fn createWindow(width: u32, height: u32, name: *const [:0]const u8) windows.
 
     const window = windows.CreateWindowExA(0, name.*, name.*, style + windows.WS_VISIBLE, windows.CW_USEDEFAULT, windows.CW_USEDEFAULT, rect.right - rect.left, rect.bottom - rect.top, null, null, winclass.hInstance, null).?;
 
+    _ = windows.GetClientRect(window, &rect);
+
     std.log.info("Application window created", .{});
 
-    return window;
+    return .{
+        .handle = window,
+        .width = width,
+        .height = height,
+        .aspect_ratio = @as(f32, @floatFromInt(width)) / @as(f32, @floatFromInt(height)),
+        .rect = rect,
+    };
 }
 
 fn win32KeyToKey(wparam: usize) zgui.Key {

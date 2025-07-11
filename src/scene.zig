@@ -6,12 +6,8 @@ pub const Scene = struct {
     camera: Camera,
     model: zmath.Mat,
 
-    pub fn init() !Scene {
-        
-        return Scene{
-            .camera = Camera.init(),
-            .model = zmath.identity()
-        };
+    pub fn init(self: *Scene) !void {
+        self.* = .{ .camera = Camera.init(), .model = zmath.identity() };
     }
 
     pub fn deinit(self: *Scene) void {
