@@ -19,6 +19,24 @@ const Window = @import("win_util.zig").Window;
 
 const DrawMode = enum { Wireframe, Shaded };
 
+pub const Draw = struct {
+    mesh: u32,
+    transform: zmath.Mat,
+};
+
+pub const Instance = struct {
+    transform: zmath.Mat,
+};
+
+const RootConst = extern struct {
+    vertex_offset: u32,
+    meshlet_offset: u32,
+    draw_mode: u32,
+    instance_id: u32,
+};
+
+const INSTANCE_COUNT = 64;
+
 pub const Renderer = struct {
     dx12: Dx12State,
     meshlet_pass: MeshletPass,
@@ -27,7 +45,7 @@ pub const Renderer = struct {
     default_heap: CbvSrvHeap,
     zgui_heap: CbvSrvHeap,
     camera_resource: Resource,
-    instance_resource: Resource,
+    instances_resource: Resource,
 
     camera_descriptor: Descriptor,
     instance_descriptor: Descriptor,
@@ -37,6 +55,8 @@ pub const Renderer = struct {
     height: u32,
 
     draw_mode: DrawMode,
+
+    draws: std.ArrayList(Draw),
 
     pub fn init(allocator: std.mem.Allocator, window: *const Window) !Renderer {
         var arena = std.heap.ArenaAllocator.init(allocator);
@@ -76,7 +96,7 @@ pub const Renderer = struct {
 
         var camera_resource = dx12_state.createResource(Camera, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "CameraBuffer") catch unreachable, .UPLOAD, dx12.device, true);
 
-        var instance_resource = dx12_state.createResource(zmath.Mat, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "InstanceBuffer") catch unreachable, .UPLOAD, dx12.device, true);
+        var instances_resource = dx12_state.createResource([INSTANCE_COUNT]zmath.Mat, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "InstanceBuffer") catch unreachable, .UPLOAD, dx12.device, true);
 
         var default_heap = CbvSrvHeap.init(16, dx12.device);
 
@@ -85,10 +105,25 @@ pub const Renderer = struct {
         dx12.device.CreateConstantBufferView(&camera_cbv_desc, camera_descriptor.cpu_handle);
 
         const instance_descriptor = default_heap.allocate();
-        const instance_cbv_desc: d3d12.CONSTANT_BUFFER_VIEW_DESC = .{ .BufferLocation = instance_resource.resource.GetGPUVirtualAddress(), .SizeInBytes = @intCast(instance_resource.buffer_size) };
+        const instance_cbv_desc: d3d12.CONSTANT_BUFFER_VIEW_DESC = .{ .BufferLocation = instances_resource.resource.GetGPUVirtualAddress(), .SizeInBytes = @intCast(instances_resource.buffer_size) };
         dx12.device.CreateConstantBufferView(&instance_cbv_desc, instance_descriptor.cpu_handle);
 
-        return Renderer{ .dx12 = dx12, .meshlet_pass = meshlet_pass, .geometry = geometry, .default_heap = default_heap, .zgui_heap = zgui_heap, .camera_resource = camera_resource, .instance_resource = instance_resource, .camera_descriptor = camera_descriptor, .instance_descriptor = instance_descriptor, .font_descriptor = font_descriptor, .width = 0, .height = 0, .draw_mode = DrawMode.Shaded };
+        return Renderer{
+            .dx12 = dx12,
+            .meshlet_pass = meshlet_pass,
+            .geometry = geometry,
+            .default_heap = default_heap,
+            .zgui_heap = zgui_heap,
+            .camera_resource = camera_resource,
+            .instances_resource = instances_resource,
+            .camera_descriptor = camera_descriptor,
+            .instance_descriptor = instance_descriptor,
+            .font_descriptor = font_descriptor,
+            .width = 0,
+            .height = 0,
+            .draw_mode = DrawMode.Shaded,
+            .draws = std.ArrayList(Draw).init(allocator),
+        };
     }
 
     pub fn deinit(self: *Renderer) void {
@@ -98,8 +133,10 @@ pub const Renderer = struct {
 
         self.default_heap.deinit();
         self.camera_resource.deinit();
-        self.instance_resource.deinit();
+        self.instances_resource.deinit();
         self.zgui_heap.deinit();
+
+        self.draws.deinit();
 
         zgui.backend.deinit();
     }
@@ -107,6 +144,9 @@ pub const Renderer = struct {
     pub fn render(self: *Renderer) void {
         const command_allocator = self.dx12.command_allocators[self.dx12.frame_index];
         const command_list = self.dx12.command_list;
+
+        const instances_ptr = @as([*]Instance, @alignCast(@ptrCast(self.instances_resource.map())));
+        defer self.instances_resource.unmap();
 
         hrPanicOnFail(command_allocator.Reset());
         hrPanicOnFail(self.dx12.command_list.Reset(command_allocator, null));
@@ -157,14 +197,27 @@ pub const Renderer = struct {
         command_list.SetGraphicsRootSignature(meshlet_pass.root_signature);
 
         command_list.SetGraphicsRootConstantBufferView(0, self.camera_resource.resource.GetGPUVirtualAddress());
-        command_list.SetGraphicsRootConstantBufferView(1, self.instance_resource.resource.GetGPUVirtualAddress());
+        command_list.SetGraphicsRootConstantBufferView(1, self.instances_resource.resource.GetGPUVirtualAddress());
 
         const heaps = [_]*d3d12.IDescriptorHeap{meshlet_resources.heap.heap};
         command_list.SetDescriptorHeaps(1, &heaps);
         command_list.SetGraphicsRootDescriptorTable(3, meshlet_resources.vertex_buffer_descriptor.gpu_handle);
 
-        for (geometry.meshes.items) |*mesh| {
-            command_list.SetGraphicsRoot32BitConstants(2, 3, &.{ mesh.vertex_offset, mesh.meshlet_offset, @intFromEnum(self.draw_mode) }, 0);
+        for (self.draws.items, 0..) |*draw, i| {
+            const mesh = geometry.meshes.items[draw.mesh];
+
+            const dst_instance_ptr = &instances_ptr[i];
+
+            std.mem.copyForwards(u8, std.mem.asBytes(dst_instance_ptr), std.mem.asBytes(&draw.transform));
+
+            const root_const: RootConst = .{
+                .vertex_offset = mesh.vertex_offset,
+                .meshlet_offset = mesh.meshlet_offset,
+                .draw_mode = @intFromEnum(self.draw_mode),
+                .instance_id = @intCast(i),
+            };
+
+            command_list.SetGraphicsRoot32BitConstants(2, 4, &root_const, 0);
             command_list.DispatchMesh(mesh.num_meshlets, 1, 1);
         }
 
@@ -184,5 +237,11 @@ pub const Renderer = struct {
         self.dx12.command_queue.ExecuteCommandLists(1, &.{@ptrCast(command_list)});
 
         self.dx12.present();
+
+        self.draws.clearRetainingCapacity();
+    }
+
+    pub fn drawMesh(self: *Renderer, mesh: u32, transform: zmath.Mat) !void {
+        try self.draws.append(.{ .mesh = mesh, .transform = zmath.transpose(transform) });
     }
 };

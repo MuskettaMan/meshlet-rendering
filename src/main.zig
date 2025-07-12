@@ -27,11 +27,6 @@ const App = @import("app.zig").App;
 const window_name: [:0]const u8 = "DX12 Zig";
 
 
-const RootConst = struct {
-    vertex_offset: u32,
-    meshlet_offset: u32,
-    draw_mode: u32,
-};
 
 pub fn main() !void {
     _ = windows.CoInitializeEx(null, windows.COINIT_MULTITHREADED);

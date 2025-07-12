@@ -2,13 +2,14 @@
     "RootFlags(ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT), " \
     "CBV(b0), " \
     "CBV(b1), " \
-    "RootConstants(b2, num32BitConstants = 3), " \
+    "RootConstants(b2, num32BitConstants = 4), " \
     "DescriptorTable(SRV(t0, numDescriptors = 4))"
 
 struct RootConst {
     uint vertex_offset;
     uint meshlet_offset;
     uint draw_mode;
+    uint instance_id;
 };
 
 struct Camera {
@@ -19,6 +20,12 @@ struct Camera {
 
 struct Instance {
     float4x4 model;
+};
+
+#define INSTANCE_COUNT 64
+
+struct Instances {
+    Instance data[INSTANCE_COUNT];
 };
 
 struct InputVertex {
@@ -34,7 +41,7 @@ struct OutputVertex {
 };
 
 ConstantBuffer<Camera> camera : register(b0);
-ConstantBuffer<Instance> instance : register(b1);
+ConstantBuffer<Instances> instances : register(b1);
 ConstantBuffer<RootConst> root_const : register(b2);
 
 StructuredBuffer<InputVertex> vertices : register(t0);
@@ -89,7 +96,7 @@ void msMain(
         float4 position = float4(vertices[vertex_index].position, 1.0);
         float3 normal = vertices[vertex_index].normal;
 
-        float4 worldPosition = mul(position, instance.model);
+        float4 worldPosition = mul(position, instances.data[root_const.instance_id].model);
 
         position = mul(worldPosition, vp);
 
@@ -107,6 +114,12 @@ void msMain(
 
 [RootSignature(ROOT_SIGNATURE)]
 void psMain(float3 barycentrics : SV_Barycentrics, OutputVertex vertex, out float4 out_color : SV_Target0) {
+
+    float squareSize = 16.0;
+    float2 pixelCoord = floor(vertex.position.xy / squareSize);
+    float checker = fmod(pixelCoord.x + pixelCoord.y, 2.0);
+    out_color = checker < 1.0 ? float4(1, 0, 1, 1) : float4(0, 0, 0, 1);
+    
     if(root_const.draw_mode == 0) {
         float3 barys = barycentrics;
         const float3 deltas = fwidth(barys);
@@ -120,7 +133,7 @@ void psMain(float3 barycentrics : SV_Barycentrics, OutputVertex vertex, out floa
         float3 lightPos = { 10.0f, 10.0f, 10.0f };
         float3 cameraPos = { 0.0f, 0.0f, -10.0f };
         float3 lightColor = { 1.0f, 1.0f, 1.0f };
-        float ambientStrength = 0.1f;
+        float ambientStrength = vertex.position.z / vertex.position.w * 1.1;
         float specularStrength = 0.5f;
         float shininess = 32.0f;
 
@@ -145,4 +158,6 @@ void psMain(float3 barycentrics : SV_Barycentrics, OutputVertex vertex, out floa
 
         out_color = float4(color, 1.0);
     }
+
+    // Shouldn't happen!
 }

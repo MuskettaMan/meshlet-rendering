@@ -62,9 +62,6 @@ pub const App = struct {
     }
 
     pub fn update(self: *App) !void {
-        const instance_ptr = self.renderer.instance_resource.map();
-        defer self.renderer.instance_resource.unmap();
-
         main_loop: while (true) {
             {
                 var message = std.mem.zeroes(windows.MSG);
@@ -127,7 +124,10 @@ pub const App = struct {
             self.scene.model = zmath.mul(self.scene.model, zmath.rotationY(self.total_time));
             self.scene.model = zmath.mul(self.scene.model, zmath.translation(0.0, -2.5, 0.0));
 
-            zmath.storeMat(castPtrToSlice(f32, instance_ptr)[0..16], zmath.transpose(self.scene.model));
+            //zmath.storeMat(castPtrToSlice(f32, instance_ptr)[0..16], zmath.transpose(self.scene.model));
+
+            try self.renderer.drawMesh(0, self.scene.model);
+            try self.renderer.drawMesh(1, self.scene.model);
 
             self.renderer.render();
         }
