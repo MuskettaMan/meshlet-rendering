@@ -5,6 +5,7 @@ const zwindows = @import("zwindows");
 const zmath = @import("zmath");
 const zmesh = @import("zmesh");
 const zgui = @import("zgui");
+const zcgltf = zmesh.io.zcgltf;
 const windows = zwindows.windows;
 const d3d12 = zwindows.d3d12;
 const hrPanicOnFail = zwindows.hrPanicOnFail;
@@ -18,6 +19,7 @@ fn castPtrToSlice(comptime T: type, mapped_ptr: *anyopaque) [*]T {
 }
 
 pub const App = struct {
+    allocator: std.mem.Allocator,
     renderer: Renderer,
     scene: *Scene,
     window: *Window,
@@ -35,6 +37,15 @@ pub const App = struct {
         const scene = try allocator.create(Scene);
         try Scene.init(scene);
 
+        var paths = std.ArrayList([:0]const u8).init(allocator);
+        defer paths.deinit();
+        try paths.append("content/DragonAttenuation.glb");
+
+        const data = zcgltf.parseAndLoadFile(paths.items[0]) catch unreachable;
+        defer zcgltf.free(data);
+
+        _ = try renderer.geometry.loadMesh(allocator, data);
+
         scene.camera.position = .{ 0.0, 0.0, -10.0, 0.0 };
         scene.camera.view = zmath.inverse(zmath.translation(scene.camera.position[0], scene.camera.position[1], scene.camera.position[2]));
         scene.camera.proj = zmath.perspectiveFovLh(0.25 * std.math.pi, window.aspect_ratio, 0.01, 200.0);
@@ -51,7 +62,7 @@ pub const App = struct {
         renderer.dx12.command_queue.ExecuteCommandLists(1, &.{@ptrCast(renderer.dx12.command_list)});
         renderer.dx12.flush();
 
-        return .{ .renderer = renderer, .scene = scene, .window = window, .time = std.time.microTimestamp(), .delta_time_i64 = 0, .total_time = 0 };
+        return .{ .allocator = allocator, .renderer = renderer, .scene = scene, .window = window, .time = std.time.microTimestamp(), .delta_time_i64 = 0, .total_time = 0 };
     }
 
     pub fn deinit(self: *App) void {
@@ -86,7 +97,7 @@ pub const App = struct {
                     rect.bottom = @max(1, rect.bottom);
                     std.log.info("Window resized to {d}x{d}", .{ rect.right, rect.bottom });
 
-                    const dx12 = &self.renderer.dx12;
+                    const dx12 = self.renderer.dx12;
                     dx12.flush();
 
                     for (dx12.swap_chain_textures) |texture| _ = texture.Release();

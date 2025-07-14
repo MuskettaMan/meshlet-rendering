@@ -13,7 +13,6 @@ const Descriptor = @import("dx12_state.zig").Descriptor;
 const Camera = @import("camera.zig").Camera;
 const zmath = @import("zmath");
 const zmesh = @import("zmesh");
-const zcgltf = zmesh.io.zcgltf;
 const hrPanicOnFail = zwindows.hrPanicOnFail;
 const Window = @import("win_util.zig").Window;
 
@@ -38,7 +37,7 @@ const RootConst = extern struct {
 const INSTANCE_COUNT = 64;
 
 pub const Renderer = struct {
-    dx12: Dx12State,
+    dx12: *Dx12State,
     meshlet_pass: MeshletPass,
     geometry: Geometry,
 
@@ -63,7 +62,7 @@ pub const Renderer = struct {
         defer arena.deinit();
         const arenaAllocator = arena.allocator();
 
-        var dx12 = Dx12State.init(window.handle) catch {
+        const dx12 = Dx12State.init(window.handle, allocator) catch {
             windows.ExitProcess(0);
         };
 
@@ -81,18 +80,10 @@ pub const Renderer = struct {
             .font_srv_gpu_desc_handle = @bitCast(font_descriptor.gpu_handle),
         });
 
-        var paths = std.ArrayList([:0]const u8).init(allocator);
-        defer paths.deinit();
-        try paths.append("content/DragonAttenuation.glb");
 
-        const data = zcgltf.parseAndLoadFile(paths.items[0]) catch unreachable;
-        defer zcgltf.free(data);
+        var geometry = try Geometry.init(allocator, dx12);
 
-        var geometry = try Geometry.init(allocator, &dx12);
-
-        try geometry.loadMesh(allocator, data);
-
-        const meshlet_pass = MeshletPass.init(&dx12, &geometry);
+        const meshlet_pass = MeshletPass.init(dx12, &geometry);
 
         var camera_resource = dx12_state.createResource(Camera, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "CameraBuffer") catch unreachable, .UPLOAD, dx12.device, true);
 

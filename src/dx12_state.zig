@@ -45,9 +45,10 @@ pub const CbvSrvHeap = struct {
     }
 };
 
-pub const Dx12StateError = error{NotSupported};
+pub const Dx12StateError = error{NotSupported, Failed};
 
 pub const Dx12State = struct {
+    allocator: std.mem.Allocator,
     dxgi_factory: *dxgi.IFactory6,
     device: *d3d12.IDevice9,
 
@@ -75,7 +76,7 @@ pub const Dx12State = struct {
     pub const rtv_format = dxgi.FORMAT.R8G8B8A8_UNORM;
     pub const dsv_format = dxgi.FORMAT.D32_FLOAT;
 
-    pub fn init(window: windows.HWND) Dx12StateError!Dx12State {
+    pub fn init(window: windows.HWND, allocator: std.mem.Allocator) Dx12StateError!*Dx12State {
         var dxgi_factory: *dxgi.IFactory6 = undefined;
 
         hrPanicOnFail(dxgi.CreateDXGIFactory2(0, &dxgi.IID_IFactory6, @ptrCast(&dxgi_factory)));
@@ -203,7 +204,10 @@ pub const Dx12State = struct {
             return Dx12StateError.NotSupported;
         }
 
-        return .{
+        const ptr = allocator.create(Dx12State) catch { return Dx12StateError.Failed; };
+
+        ptr.* = .{
+            .allocator = allocator,
             .dxgi_factory = dxgi_factory,
             .device = device,
             .command_queue = command_queue,
@@ -219,6 +223,8 @@ pub const Dx12State = struct {
             .command_allocators = command_allocators,
             .command_list = command_list,
         };
+
+        return ptr;
     }
 
     pub fn deinit(dx12: *Dx12State) void {
@@ -233,7 +239,8 @@ pub const Dx12State = struct {
         _ = dx12.command_queue.Release();
         _ = dx12.device.Release();
         _ = dx12.dxgi_factory.Release();
-        dx12.* = undefined;
+
+        dx12.allocator.destroy(dx12);
     }
 
     pub fn present(dx12: *Dx12State) void {

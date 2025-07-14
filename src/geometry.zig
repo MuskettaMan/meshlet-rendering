@@ -17,6 +17,8 @@ const INDEX_BUFFER_SIZE = 16 * MB;
 const MESHLET_BUFFER_SIZE = 2 * MB;
 const MESHLET_DATA_BUFFER_SIZE = 8 * MB;
 
+pub const MeshHandle = u32;
+
 pub const Geometry = struct {
     meshes: std.ArrayList(mesh_data.Mesh),
 
@@ -57,7 +59,7 @@ pub const Geometry = struct {
         self.meshlet_data_buffer_resource.deinit();
     }
 
-    pub fn loadMesh(self: *Geometry, allocator: std.mem.Allocator, data: *zcgltf.Data) !void {
+    pub fn loadMesh(self: *Geometry, allocator: std.mem.Allocator, data: *zcgltf.Data) !MeshHandle {
         var arena = std.heap.ArenaAllocator.init(allocator);
         defer arena.deinit();
 
@@ -87,5 +89,7 @@ pub const Geometry = struct {
         self.total_index_count += total_index_count;
         self.total_meshlet_count += total_meshlet_count;
         self.total_meshlet_data_count += total_meshlet_data_count;
+
+        return @intCast(self.meshes.items.len - 1);
     }
 };
