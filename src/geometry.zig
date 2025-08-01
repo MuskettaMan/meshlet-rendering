@@ -20,8 +20,14 @@ const MESHLET_DATA_BUFFER_SIZE = 8 * MB;
 
 pub const MeshHandle = u32;
 
+pub const Mesh = struct {
+    start: u32,
+    length: u32,
+};
+
 pub const Geometry = struct {
-    meshes: std.ArrayList(mesh_data.Mesh),
+    primitives: std.ArrayList(mesh_data.Primitive),
+    meshes: std.ArrayList(Mesh),
 
     vertex_buffer_resource: Resource,
     index_buffer_resource: Resource,
@@ -41,18 +47,20 @@ pub const Geometry = struct {
 
         const arenaAllocator = arena.allocator();
 
-        const all_meshes = std.ArrayList(mesh_data.Mesh).init(allocator);
+        const primitives = std.ArrayList(mesh_data.Primitive).init(allocator);
+        const meshes = std.ArrayList(Mesh).init(allocator);
 
         const vertex_buffer_resource = dx12_state.createResourceWithSize(std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "VertexBuffer") catch unreachable, VERTEX_BUFFER_SIZE, .DEFAULT, dx12.device);
         const index_buffer_resource = dx12_state.createResourceWithSize(std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "IndexBuffer") catch unreachable, INDEX_BUFFER_SIZE, .DEFAULT, dx12.device);
         const meshlet_buffer_resource = dx12_state.createResourceWithSize(std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "MeshletBuffer") catch unreachable, MESHLET_BUFFER_SIZE, .DEFAULT, dx12.device);
         const meshlet_data_buffer_resource = dx12_state.createResourceWithSize(std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "MeshletDataBuffer") catch unreachable, MESHLET_DATA_BUFFER_SIZE, .DEFAULT, dx12.device);
 
-        return Geometry{ .meshes = all_meshes, .vertex_buffer_resource = vertex_buffer_resource, .index_buffer_resource = index_buffer_resource, .meshlet_buffer_resource = meshlet_buffer_resource, .meshlet_data_buffer_resource = meshlet_data_buffer_resource, .dx12 = dx12 };
+        return Geometry{ .primitives = primitives, .meshes = meshes, .vertex_buffer_resource = vertex_buffer_resource, .index_buffer_resource = index_buffer_resource, .meshlet_buffer_resource = meshlet_buffer_resource, .meshlet_data_buffer_resource = meshlet_data_buffer_resource, .dx12 = dx12 };
     }
 
     pub fn deinit(self: *const Geometry) void {
         self.meshes.deinit();
+        self.primitives.deinit();
 
         self.vertex_buffer_resource.deinit();
         self.index_buffer_resource.deinit();
@@ -71,28 +79,31 @@ pub const Geometry = struct {
         var all_meshlets = std.ArrayList(mesh_data.Meshlet).init(arenaAllocator);
         var all_meshlets_data = std.ArrayList(u32).init(arenaAllocator);
 
-        try mesh_data.loadOptimizedMesh(allocator, cpuMesh, &self.meshes, &all_vertices, &all_indices, &all_meshlets, &all_meshlets_data);
+        const mesh = Mesh{ .start = @intCast(self.primitives.items.len), .length = @intCast(cpuMesh.primitives.items.len) };
+        try self.meshes.append(mesh);
 
-        var mesh = &self.meshes.items[self.meshes.items.len - 1];
-        mesh.vertex_offset += self.total_vertex_count;
-        mesh.index_offset += self.total_index_count;
-        mesh.meshlet_offset += self.total_meshlet_count;
-        
-        const total_vertex_count: u32 = @intCast(all_vertices.items.len);
-        const total_index_count: u32 = @intCast(all_indices.items.len);
-        const total_meshlet_count: u32 = @intCast(all_meshlets.items.len);
-        const total_meshlet_data_count: u32 = @intCast(all_meshlets_data.items.len);
+        const total_vertex_count: u32 = self.total_vertex_count;
+        const total_index_count: u32 = self.total_index_count;
+        const total_meshlet_count: u32 = self.total_meshlet_count;
+        const total_meshlet_data_count: u32 = self.total_meshlet_data_count;
 
-        dx12_state.copyBuffer(mesh_data.Vertex, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "VertexUploadBuffer") catch unreachable, &all_vertices, &self.vertex_buffer_resource, @sizeOf(mesh_data.Vertex) * self.total_vertex_count, self.dx12);
-        dx12_state.copyBuffer(u32, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "IndexUploadBuffer") catch unreachable, &all_indices, &self.index_buffer_resource, @sizeOf(u32) * self.total_index_count, self.dx12);
-        dx12_state.copyBuffer(mesh_data.Meshlet, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "MeshletUploadBuffer") catch unreachable, &all_meshlets, &self.meshlet_buffer_resource, @sizeOf(mesh_data.Meshlet) * self.total_meshlet_count, self.dx12);
-        dx12_state.copyBuffer(u32, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "MeshletDataUploadBuffer") catch unreachable, &all_meshlets_data, &self.meshlet_data_buffer_resource, @sizeOf(u32) * self.total_meshlet_data_count, self.dx12);
+        for (cpuMesh.primitives.items) |*primitive| {
+            try mesh_data.loadOptimizedMesh(allocator, primitive, &self.primitives, &all_vertices, &all_indices, &all_meshlets, &all_meshlets_data);
+            const prim = &self.primitives.items[self.meshes.items.len - 1];
+            prim.vertex_offset += self.total_vertex_count;
+            prim.index_offset += self.total_index_count;
+            prim.meshlet_offset += self.total_meshlet_count;
 
-        self.total_vertex_count += total_vertex_count;
-        self.total_index_count += total_index_count;
-        self.total_meshlet_count += total_meshlet_count;
-        self.total_meshlet_data_count += total_meshlet_data_count;
+            self.total_vertex_count += @intCast(all_vertices.items.len);
+            self.total_index_count += @intCast(all_indices.items.len);
+            self.total_meshlet_count += @intCast(all_meshlets.items.len);
+            self.total_meshlet_data_count += @intCast(all_meshlets_data.items.len);
+        }
 
+        dx12_state.copyBuffer(mesh_data.Vertex, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "VertexUploadBuffer") catch unreachable, &all_vertices, &self.vertex_buffer_resource, @sizeOf(mesh_data.Vertex) * total_vertex_count, self.dx12);
+        dx12_state.copyBuffer(u32, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "IndexUploadBuffer") catch unreachable, &all_indices, &self.index_buffer_resource, @sizeOf(u32) * total_index_count, self.dx12);
+        dx12_state.copyBuffer(mesh_data.Meshlet, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "MeshletUploadBuffer") catch unreachable, &all_meshlets, &self.meshlet_buffer_resource, @sizeOf(mesh_data.Meshlet) * total_meshlet_count, self.dx12);
+        dx12_state.copyBuffer(u32, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "MeshletDataUploadBuffer") catch unreachable, &all_meshlets_data, &self.meshlet_data_buffer_resource, @sizeOf(u32) * total_meshlet_data_count, self.dx12);
         return @intCast(self.meshes.items.len - 1);
     }
 };

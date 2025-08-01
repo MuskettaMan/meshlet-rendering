@@ -34,6 +34,7 @@ const RootConst = extern struct {
     meshlet_offset: u32,
     draw_mode: u32,
     instance_id: u32,
+    primitive_id: u32,
 };
 
 const INSTANCE_COUNT = 64;
@@ -218,6 +219,7 @@ pub const Renderer = struct {
         command_list.SetGraphicsRootConstantBufferView(0, self.camera_resource.resource.GetGPUVirtualAddress());
         command_list.SetGraphicsRootConstantBufferView(1, self.instances_resource.resource.GetGPUVirtualAddress());
 
+        var primitive_id: u32 = 0;
         for (self.draws.items, 0..) |*draw, i| {
             const mesh = geometry.meshes.items[draw.mesh];
 
@@ -225,22 +227,28 @@ pub const Renderer = struct {
 
             std.mem.copyForwards(u8, std.mem.asBytes(dst_instance_ptr), std.mem.asBytes(&draw.transform));
 
-            const root_const: RootConst = .{
-                .vertex_offset = mesh.vertex_offset,
-                .meshlet_offset = mesh.meshlet_offset,
-                .draw_mode = @intFromEnum(self.draw_mode),
-                .instance_id = @intCast(i),
-            };
+            for(mesh.start..mesh.start+mesh.length) |prim_index| {
+                const prim = &geometry.primitives.items[prim_index];
 
-            command_list.SetGraphicsRoot32BitConstants(2, 4, &root_const, 0);
+                primitive_id += 1;
+                const root_const: RootConst = .{
+                    .vertex_offset = prim.vertex_offset,
+                    .meshlet_offset = prim.meshlet_offset,
+                    .draw_mode = @intFromEnum(self.draw_mode),
+                    .instance_id = @intCast(i),
+                    .primitive_id = primitive_id,
+                };
 
-            switch (self.render_pass) {
-                RenderPass.Meshlet => {
-                    command_list.DispatchMesh(mesh.num_meshlets, 1, 1);
-                },
-                RenderPass.Raster => {
-                    command_list.DrawIndexedInstanced(mesh.num_indices, 1, mesh.index_offset, @intCast(mesh.vertex_offset), 0);
-                },
+                command_list.SetGraphicsRoot32BitConstants(2, 5, &root_const, 0);
+
+                switch (self.render_pass) {
+                    RenderPass.Meshlet => {
+                        command_list.DispatchMesh(prim.num_meshlets, 1, 1);
+                    },
+                    RenderPass.Raster => {
+                        command_list.DrawIndexedInstanced(prim.num_indices, 1, prim.index_offset, @intCast(prim.vertex_offset), 0);
+                    },
+                }
             }
         }
 

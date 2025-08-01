@@ -43,7 +43,7 @@ pub const App = struct {
         const scene = try allocator.create(Scene);
         try Scene.init(scene);
 
-        const model = try ModelLoader.load("content/shapes.glb", allocator);
+        const model = try ModelLoader.load("content/Sponza/Sponza.gltf", allocator);
 
         for (model.meshes.items) |*mesh| {
             const handle = try renderer.geometry.loadMesh(allocator, mesh);

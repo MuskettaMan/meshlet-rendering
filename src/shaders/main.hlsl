@@ -2,7 +2,7 @@
     "RootFlags(ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT), " \
     "CBV(b0), " \
     "CBV(b1), " \
-    "RootConstants(b2, num32BitConstants = 4), " \
+    "RootConstants(b2, num32BitConstants = 5), " \
     "DescriptorTable(SRV(t0, numDescriptors = 4))"
 
 struct RootConst {
@@ -10,6 +10,7 @@ struct RootConst {
     uint meshlet_offset;
     uint draw_mode;
     uint instance_id;
+    uint primitive_id;
 };
 
 struct Camera {
@@ -76,7 +77,7 @@ OutputVertex vsMain(InputVertex input) {
 
     position = mul(worldPosition, vp);
 
-    const uint hash = computeHash(root_const.instance_id);
+    const uint hash = computeHash(root_const.primitive_id);
     const float3 color = float3(hash & 0xff, (hash >> 8) & 0xff, (hash >> 16) & 0xff) / 255.0;
 
     output.position = position;
