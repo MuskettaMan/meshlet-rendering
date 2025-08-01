@@ -39,8 +39,9 @@ pub const MeshletPass = struct {
         };
     }
 
-    pub fn deinit(self: *const MeshletPass) void {
+    pub fn deinit(self: *MeshletPass) void {
         _ = self.pipeline.Release();
         _ = self.root_signature.Release();
+        self.resources.deinit();
     }
 };

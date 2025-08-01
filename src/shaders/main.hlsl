@@ -30,13 +30,13 @@ struct Instances {
 
 struct InputVertex {
     float3 position : POSITION;
-    float3 normal: _Normal;
+    float3 normal: NORMAL;
 };
 
 struct OutputVertex {
     float4 position : SV_Position;
-    float3 color : _Color;
-    float3 normal : _Normal;
+    float3 color : COLOR;
+    float3 normal : NORMAL;
     float3 worldPosition : _WorldPosition;
 };
 
@@ -61,6 +61,30 @@ uint computeHash(uint a) {
     a = (a + 0xfd7046c5) + (a << 3);
     a = (a ^ 0xb55a4f09) ^ (a >> 16);
     return a;
+}
+
+[RootSignature(ROOT_SIGNATURE)]
+OutputVertex vsMain(InputVertex input) {
+    OutputVertex output;
+
+    const float4x4 vp = mul(camera.view, camera.proj);
+
+    float4 position = float4(input.position, 1.0);
+    float3 normal = input.normal;
+
+    float4 worldPosition = mul(position, instances.data[root_const.instance_id].model);
+
+    position = mul(worldPosition, vp);
+
+    const uint hash = computeHash(root_const.instance_id);
+    const float3 color = float3(hash & 0xff, (hash >> 8) & 0xff, (hash >> 16) & 0xff) / 255.0;
+
+    output.position = position;
+    output.normal = normal;
+    output.color = color;
+    output.worldPosition = worldPosition.xyz;
+
+    return output;
 }
 
 [RootSignature(ROOT_SIGNATURE)]

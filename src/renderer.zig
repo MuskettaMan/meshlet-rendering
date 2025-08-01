@@ -1,5 +1,6 @@
 const std = @import("std");
 const MeshletPass = @import("meshlet_pass.zig").MeshletPass;
+const RasterPass = @import("raster_pass.zig").RasterPass;
 const Geometry = @import("geometry.zig").Geometry;
 const dx12_state = @import("dx12_state.zig");
 const Dx12State = dx12_state.Dx12State;
@@ -17,6 +18,7 @@ const hrPanicOnFail = zwindows.hrPanicOnFail;
 const Window = @import("win_util.zig").Window;
 
 const DrawMode = enum { Wireframe, Shaded };
+const RenderPass = enum { Meshlet, Raster };
 
 pub const Draw = struct {
     mesh: u32,
@@ -39,6 +41,7 @@ const INSTANCE_COUNT = 64;
 pub const Renderer = struct {
     dx12: *Dx12State,
     meshlet_pass: MeshletPass,
+    raster_pass: RasterPass,
     geometry: Geometry,
 
     default_heap: CbvSrvHeap,
@@ -54,6 +57,7 @@ pub const Renderer = struct {
     height: u32,
 
     draw_mode: DrawMode,
+    render_pass: RenderPass,
 
     draws: std.ArrayList(Draw),
 
@@ -83,6 +87,7 @@ pub const Renderer = struct {
         var geometry = try Geometry.init(allocator, dx12);
 
         const meshlet_pass = MeshletPass.init(dx12, &geometry);
+        const raster_pass = RasterPass.init(dx12, &geometry);
 
         var camera_resource = dx12_state.createResource(Camera, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "CameraBuffer") catch unreachable, .UPLOAD, dx12.device, true);
 
@@ -104,6 +109,7 @@ pub const Renderer = struct {
         return Renderer{
             .dx12 = dx12,
             .meshlet_pass = meshlet_pass,
+            .raster_pass = raster_pass,
             .geometry = geometry,
             .default_heap = default_heap,
             .zgui_heap = zgui_heap,
@@ -115,6 +121,7 @@ pub const Renderer = struct {
             .width = 0,
             .height = 0,
             .draw_mode = DrawMode.Shaded,
+            .render_pass = RenderPass.Raster,
             .draws = std.ArrayList(Draw).init(allocator),
         };
     }
@@ -178,23 +185,38 @@ pub const Renderer = struct {
         // Can draw gui elemenets here.
         if (zgui.begin("Settings", .{ .flags = .{ .always_auto_resize = true } })) {
             _ = zgui.comboFromEnum("Draw Mode", &self.draw_mode);
+            _ = zgui.comboFromEnum("Render pass", &self.render_pass);
             zgui.end();
         }
 
         const geometry = &self.geometry;
         const meshlet_pass = &self.meshlet_pass;
         const meshlet_resources = &meshlet_pass.resources;
+        const raster_pass = &self.raster_pass;
+        const raster_resources = &raster_pass.resources;
 
         command_list.IASetPrimitiveTopology(.TRIANGLELIST);
-        command_list.SetPipelineState(meshlet_pass.pipeline);
-        command_list.SetGraphicsRootSignature(meshlet_pass.root_signature);
+
+        switch (self.render_pass) {
+            RenderPass.Meshlet => {
+                command_list.SetPipelineState(meshlet_pass.pipeline);
+                command_list.SetGraphicsRootSignature(meshlet_pass.root_signature);
+
+                const heaps = [_]*d3d12.IDescriptorHeap{meshlet_resources.heap.heap};
+                command_list.SetDescriptorHeaps(1, &heaps);
+                command_list.SetGraphicsRootDescriptorTable(3, meshlet_resources.vertex_buffer_descriptor.gpu_handle);
+            },
+            RenderPass.Raster => {
+                command_list.SetPipelineState(raster_pass.pipeline);
+                command_list.SetGraphicsRootSignature(raster_pass.root_signature);
+
+                command_list.IASetVertexBuffers(0, 1, @ptrCast(&raster_resources.vbv));
+                command_list.IASetIndexBuffer(&raster_resources.ibv);
+            },
+        }
 
         command_list.SetGraphicsRootConstantBufferView(0, self.camera_resource.resource.GetGPUVirtualAddress());
         command_list.SetGraphicsRootConstantBufferView(1, self.instances_resource.resource.GetGPUVirtualAddress());
-
-        const heaps = [_]*d3d12.IDescriptorHeap{meshlet_resources.heap.heap};
-        command_list.SetDescriptorHeaps(1, &heaps);
-        command_list.SetGraphicsRootDescriptorTable(3, meshlet_resources.vertex_buffer_descriptor.gpu_handle);
 
         for (self.draws.items, 0..) |*draw, i| {
             const mesh = geometry.meshes.items[draw.mesh];
@@ -211,7 +233,15 @@ pub const Renderer = struct {
             };
 
             command_list.SetGraphicsRoot32BitConstants(2, 4, &root_const, 0);
-            command_list.DispatchMesh(mesh.num_meshlets, 1, 1);
+
+            switch (self.render_pass) {
+                RenderPass.Meshlet => {
+                    command_list.DispatchMesh(mesh.num_meshlets, 1, 1);
+                },
+                RenderPass.Raster => {
+                    command_list.DrawIndexedInstanced(mesh.num_indices, 1, mesh.index_offset, @intCast(mesh.vertex_offset), 0);
+                },
+            }
         }
 
         const zgui_heaps = [_]*d3d12.IDescriptorHeap{self.zgui_heap.heap};
