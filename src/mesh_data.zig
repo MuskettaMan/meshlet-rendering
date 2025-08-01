@@ -1,6 +1,7 @@
 const zmath = @import("zmath");
 const zmesh = @import("zmesh");
 const std = @import("std");
+const ModelLoader = @import("model_loader.zig");
 
 const assert = std.debug.assert;
 const zcgltf = zmesh.io.zcgltf;
@@ -32,42 +33,25 @@ comptime {
     assert(@alignOf(Meshlet) == 8);
 }
 
-pub fn loadOptimizedMesh(allocator: std.mem.Allocator, data: *zcgltf.Data, all_meshes: *std.ArrayList(Mesh), all_vertices: *std.ArrayList(Vertex), all_indices: *std.ArrayList(u32), all_meshlets: *std.ArrayList(Meshlet), all_meshlets_data: *std.ArrayList(u32)) !void {
+pub fn loadOptimizedMesh(allocator: std.mem.Allocator, cpuMesh: *ModelLoader.CPUMesh, all_meshes: *std.ArrayList(Mesh), all_vertices: *std.ArrayList(Vertex), all_indices: *std.ArrayList(u32), all_meshlets: *std.ArrayList(Meshlet), all_meshlets_data: *std.ArrayList(u32)) !void {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
 
     const arenaAllocator = arena.allocator();
 
-
-    for (0..data.meshes_count) |mesh_index| {
-        var mesh_indices = std.ArrayList(u32).init(arenaAllocator);
-        var mesh_positions = std.ArrayList([3]f32).init(arenaAllocator);
-        var mesh_normals = std.ArrayList([3]f32).init(arenaAllocator);
-
-        zcgltf.appendMeshPrimitive(data, @intCast(mesh_index), 0, &mesh_indices, &mesh_positions, &mesh_normals, null, null) catch unreachable;
-
-        var mesh_vertices = std.ArrayList(Vertex).init(arenaAllocator);
-        try mesh_vertices.resize(mesh_positions.items.len);
-        for (0..mesh_vertices.items.len) |i| {
-            mesh_vertices.items[i] = .{
-                .position = mesh_positions.items[i],
-                .normal = mesh_normals.items[i],
-            };
-        }
-
         var remap = std.ArrayList(u32).init(arenaAllocator);
-        try remap.resize(mesh_indices.items.len);
+        try remap.resize(cpuMesh.indices.items.len);
 
-        const num_unique_vertices = zmesh.opt.generateVertexRemap(remap.items, mesh_indices.items, Vertex, mesh_vertices.items);
+        const num_unique_vertices = zmesh.opt.generateVertexRemap(remap.items, cpuMesh.indices.items, Vertex, cpuMesh.vertices.items);
 
         var optimized_vertices = std.ArrayList(Vertex).init(arenaAllocator);
         try optimized_vertices.resize(num_unique_vertices);
 
-        zmesh.opt.remapVertexBuffer(Vertex, optimized_vertices.items, mesh_vertices.items, remap.items);
+        zmesh.opt.remapVertexBuffer(Vertex, optimized_vertices.items, cpuMesh.vertices.items, remap.items);
 
         var optimized_indices = std.ArrayList(u32).init(arenaAllocator);
-        try optimized_indices.resize(mesh_indices.items.len);
-        zmesh.opt.remapIndexBuffer(optimized_indices.items, mesh_indices.items, remap.items);
+        try optimized_indices.resize(cpuMesh.indices.items.len);
+        zmesh.opt.remapIndexBuffer(optimized_indices.items, cpuMesh.indices.items, remap.items);
 
         zmesh.opt.optimizeVertexCache(optimized_indices.items, optimized_indices.items, optimized_vertices.items.len);
         const num_optimized_vertices = zmesh.opt.optimizeVertexFetch(Vertex, optimized_vertices.items, optimized_indices.items, optimized_vertices.items);
@@ -119,5 +103,4 @@ pub fn loadOptimizedMesh(allocator: std.mem.Allocator, data: *zcgltf.Data, all_m
 
         try all_indices.appendSlice(optimized_indices.items);
         try all_vertices.appendSlice(optimized_vertices.items);
-    }
 }

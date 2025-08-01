@@ -45,7 +45,7 @@ pub const CbvSrvHeap = struct {
     }
 };
 
-pub const Dx12StateError = error{NotSupported, Failed};
+pub const Dx12StateError = error{ NotSupported, Failed };
 
 pub const Dx12State = struct {
     allocator: std.mem.Allocator,
@@ -204,7 +204,9 @@ pub const Dx12State = struct {
             return Dx12StateError.NotSupported;
         }
 
-        const ptr = allocator.create(Dx12State) catch { return Dx12StateError.Failed; };
+        const ptr = allocator.create(Dx12State) catch {
+            return Dx12StateError.Failed;
+        };
 
         ptr.* = .{
             .allocator = allocator,
@@ -271,6 +273,7 @@ pub const Dx12State = struct {
 pub const Resource = struct {
     resource: *d3d12.IResource,
     buffer_size: usize,
+    state: d3d12.RESOURCE_STATES = .COMMON,
 
     pub fn map(self: *const Resource) *anyopaque {
         const read_range: d3d12.RANGE = .{ .Begin = 0, .End = 0 };
@@ -308,7 +311,7 @@ pub fn createResource(comptime T: type, name: [:0]const u16, heap_type: d3d12.HE
     return createResourceWithSize(name, buffer_size, heap_type, device);
 }
 
-pub fn copyBuffer(comptime T: type, name: [:0]const u16, src_data: *const std.ArrayList(T), dest_resource: *const Resource, offset: usize, dx12: *Dx12State) void {
+pub fn copyBuffer(comptime T: type, name: [:0]const u16, src_data: *const std.ArrayList(T), dest_resource: *Resource, offset: usize, dx12: *Dx12State) void {
     const upload = createResourceWithSize(name, @sizeOf(T) * src_data.items.len, .UPLOAD, dx12.device);
     const mappedPtr = upload.map();
     defer upload.unmap();
@@ -319,12 +322,14 @@ pub fn copyBuffer(comptime T: type, name: [:0]const u16, src_data: *const std.Ar
         dest[i] = data_element;
     }
 
-    var barrier = d3d12.RESOURCE_BARRIER{ .Type = .TRANSITION, .Flags = .{}, .u = .{ .Transition = .{ .pResource = dest_resource.resource, .StateBefore = .COMMON, .StateAfter = .{ .COPY_DEST = true }, .Subresource = d3d12.RESOURCE_BARRIER_ALL_SUBRESOURCES } } };
+    var barrier = d3d12.RESOURCE_BARRIER{ .Type = .TRANSITION, .Flags = .{}, .u = .{ .Transition = .{ .pResource = dest_resource.resource, .StateBefore = dest_resource.state, .StateAfter = .{ .COPY_DEST = true }, .Subresource = d3d12.RESOURCE_BARRIER_ALL_SUBRESOURCES } } };
+    dest_resource.state = .{ .COPY_DEST = true };
     dx12.command_list.ResourceBarrier(1, @ptrCast(&barrier));
     dx12.command_list.CopyBufferRegion(dest_resource.resource, offset, upload.resource, 0, upload.buffer_size);
 
     barrier.u.Transition.StateBefore = .{ .COPY_DEST = true };
     barrier.u.Transition.StateAfter = .GENERIC_READ;
+    dest_resource.state = d3d12.RESOURCE_STATES.GENERIC_READ;
     dx12.command_list.ResourceBarrier(1, @ptrCast(&barrier));
 
     dx12.flush();

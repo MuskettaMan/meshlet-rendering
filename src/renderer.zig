@@ -80,7 +80,6 @@ pub const Renderer = struct {
             .font_srv_gpu_desc_handle = @bitCast(font_descriptor.gpu_handle),
         });
 
-
         var geometry = try Geometry.init(allocator, dx12);
 
         const meshlet_pass = MeshletPass.init(dx12, &geometry);
@@ -98,6 +97,9 @@ pub const Renderer = struct {
         const instance_descriptor = default_heap.allocate();
         const instance_cbv_desc: d3d12.CONSTANT_BUFFER_VIEW_DESC = .{ .BufferLocation = instances_resource.resource.GetGPUVirtualAddress(), .SizeInBytes = @intCast(instances_resource.buffer_size) };
         dx12.device.CreateConstantBufferView(&instance_cbv_desc, instance_descriptor.cpu_handle);
+
+        hrPanicOnFail(dx12.command_allocators[0].Reset());
+        hrPanicOnFail(dx12.command_list.Reset(dx12.command_allocators[0], null));
 
         return Renderer{
             .dx12 = dx12,
