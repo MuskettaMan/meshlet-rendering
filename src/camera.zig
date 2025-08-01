@@ -44,8 +44,16 @@ pub const Camera = struct {
         var mouse_pos = zgui.getMousePos();
         if (mouse_pos[0] > 10000 or mouse_pos[0] < 0.0) mouse_pos[0] = 0.0;
         if (mouse_pos[1] > 10000 or mouse_pos[1] < 0.0) mouse_pos[1] = 0.0;
-        const mouse_delta: [2]f32 = .{ self.prev_mouse_pos[0] - mouse_pos[0], self.prev_mouse_pos[1] - mouse_pos[1] };
+        var mouse_delta: [2]f32 = .{ self.prev_mouse_pos[0] - mouse_pos[0], self.prev_mouse_pos[1] - mouse_pos[1] };
         self.prev_mouse_pos = mouse_pos;
+
+        if (@abs(mouse_delta[0]) > 60) mouse_delta[0] = 0.0;
+        if (@abs(mouse_delta[1]) > 60) mouse_delta[1] = 0.0;
+
+        if (!zgui.isMouseDown(.left)) {
+            mouse_delta[0] = 0.0;
+            mouse_delta[1] = 0.0;
+        }
         //std.debug.print("delta x {} delta y {}\n", .{ mouse_delta[0], mouse_delta[1] });
 
         if (!io.getWantCaptureMouse()) {
