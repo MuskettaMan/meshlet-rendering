@@ -33,30 +33,26 @@ pub const App = struct {
         zmesh.init(allocator);
         zgui.init(allocator);
 
+        var point: windows.POINT = undefined;
+        _ = windows.GetCursorPos(&point);
+        zgui.io.addMousePositionEvent(@floatFromInt(point.x), @floatFromInt(point.y));
+
         _ = zgui.io.addFontFromFile(content_dir ++ "Roboto-Medium.ttf", 16.0);
 
         var renderer = try Renderer.init(allocator, window);
         const scene = try allocator.create(Scene);
         try Scene.init(scene);
 
-        const model = try ModelLoader.load("content/DragonAttenuation.glb", allocator);
+        const model = try ModelLoader.load("content/shapes.glb", allocator);
 
         for (model.meshes.items) |*mesh| {
             const handle = try renderer.geometry.loadMesh(allocator, mesh);
             _ = handle;
         }
 
-        scene.camera.position = .{ 0.0, 0.0, -10.0, 0.0 };
+        scene.camera.position = .{ 0.0, 2.0, -10.0, 0.0 };
         scene.camera.view = zmath.inverse(zmath.translation(scene.camera.position[0], scene.camera.position[1], scene.camera.position[2]));
-        scene.camera.proj = zmath.perspectiveFovLh(0.25 * std.math.pi, window.aspect_ratio, 0.01, 200.0);
-
-        const camera_ptr = renderer.camera_resource.map();
-        defer renderer.camera_resource.unmap();
-
-        // TODO: Simplify and clarify this code.
-        zmath.storeMat(castPtrToSlice(f32, camera_ptr)[0..16], zmath.transpose(scene.camera.view));
-        zmath.storeMat(castPtrToSlice(f32, camera_ptr)[16..32], zmath.transpose(scene.camera.proj));
-        zmath.store(castPtrToSlice(f32, camera_ptr)[32..35], scene.camera.position, 3);
+        scene.camera.proj = zmath.perspectiveFovLh(std.math.degreesToRadians(70), window.aspect_ratio, 0.01, 200.0);
 
         hrPanicOnFail(renderer.dx12.command_list.Close());
         renderer.dx12.command_queue.ExecuteCommandLists(1, &.{@ptrCast(renderer.dx12.command_list)});
@@ -129,10 +125,13 @@ pub const App = struct {
             const delta_time: f32 = @as(f32, @floatFromInt(self.delta_time_i64)) / @as(f32, std.time.us_per_s);
             self.total_time += delta_time;
 
-            try self.renderer.drawMesh(self.nodes.items[1].mesh, self.nodes.items[1].transform);
-            //for (self.nodes.items) |*node| {
-            //    try self.renderer.drawMesh(node.mesh, node.transform);
-            //}
+            self.scene.camera.update(delta_time);
+            self.renderer.updateCamera(&self.scene.camera);
+
+            //try self.renderer.drawMesh(self.nodes.items[0].mesh, self.nodes.items[0].transform);
+            for (self.nodes.items) |*node| {
+                try self.renderer.drawMesh(node.mesh, node.transform);
+            }
 
             self.renderer.render();
         }

@@ -237,4 +237,17 @@ pub const Renderer = struct {
     pub fn drawMesh(self: *Renderer, mesh: u32, transform: zmath.Mat) !void {
         try self.draws.append(.{ .mesh = mesh, .transform = zmath.transpose(transform) });
     }
+
+    pub fn updateCamera(self: *Renderer, camera: *const Camera) void {
+        const camera_ptr = self.camera_resource.map();
+        defer self.camera_resource.unmap();
+
+        zmath.storeMat(castPtrToSlice(f32, camera_ptr)[0..16], zmath.transpose(camera.view));
+        zmath.storeMat(castPtrToSlice(f32, camera_ptr)[16..32], zmath.transpose(camera.proj));
+        zmath.store(castPtrToSlice(f32, camera_ptr)[32..35], camera.position, 3);
+    }
 };
+
+fn castPtrToSlice(comptime T: type, mapped_ptr: *anyopaque) [*]T {
+    return @as([*]T, @ptrCast(@alignCast(mapped_ptr)));
+}

@@ -133,7 +133,7 @@ void psMain(float3 barycentrics : SV_Barycentrics, OutputVertex vertex, out floa
         float3 lightPos = { 10.0f, 10.0f, 10.0f };
         float3 cameraPos = { 0.0f, 0.0f, -10.0f };
         float3 lightColor = { 1.0f, 1.0f, 1.0f };
-        float ambientStrength = vertex.position.z / vertex.position.w * 1.1;
+        float ambientStrength = 0.1;
         float specularStrength = 0.5f;
         float shininess = 32.0f;
 
