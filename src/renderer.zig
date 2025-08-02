@@ -61,6 +61,8 @@ pub const Renderer = struct {
     render_pass: RenderPass,
 
     draws: std.ArrayList(Draw),
+    fps: f32,
+    frame_time: f32,
 
     pub fn init(allocator: std.mem.Allocator, window: *const Window) !Renderer {
         var arena = std.heap.ArenaAllocator.init(allocator);
@@ -124,6 +126,8 @@ pub const Renderer = struct {
             .draw_mode = DrawMode.Shaded,
             .render_pass = RenderPass.Raster,
             .draws = std.ArrayList(Draw).init(allocator),
+            .fps = 0.0,
+            .frame_time = 0.0,
         };
     }
 
@@ -142,7 +146,7 @@ pub const Renderer = struct {
         zgui.backend.deinit();
     }
 
-    pub fn render(self: *Renderer) void {
+    pub fn render(self: *Renderer, delta_time: f32) void {
         const command_allocator = self.dx12.command_allocators[self.dx12.frame_index];
         const command_list = self.dx12.command_list;
 
@@ -185,8 +189,16 @@ pub const Renderer = struct {
 
         // Can draw gui elemenets here.
         if (zgui.begin("Settings", .{ .flags = .{ .always_auto_resize = true } })) {
+            const fps = 1.0 / delta_time;
+            const frame_time = delta_time * 1000;
+            self.fps = self.fps * 0.99 + fps * 0.01;
+            self.frame_time = self.frame_time * 0.99 + frame_time * 0.01;
+            zgui.labelText("FPS", "{d:.0}", .{self.fps});
+            zgui.labelText("Frame Time (ms)", "{d:.4}", .{self.frame_time});
+
             _ = zgui.comboFromEnum("Draw Mode", &self.draw_mode);
             _ = zgui.comboFromEnum("Render pass", &self.render_pass);
+
             zgui.end();
         }
 
@@ -227,7 +239,7 @@ pub const Renderer = struct {
 
             std.mem.copyForwards(u8, std.mem.asBytes(dst_instance_ptr), std.mem.asBytes(&draw.transform));
 
-            for(mesh.start..mesh.start+mesh.length) |prim_index| {
+            for (mesh.start..mesh.start + mesh.length) |prim_index| {
                 const prim = &geometry.primitives.items[prim_index];
 
                 primitive_id += 1;

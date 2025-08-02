@@ -133,7 +133,7 @@ pub const App = struct {
                 try self.renderer.drawMesh(node.mesh, node.transform);
             }
 
-            self.renderer.render();
+            self.renderer.render(delta_time);
         }
 
         self.renderer.dx12.flush();

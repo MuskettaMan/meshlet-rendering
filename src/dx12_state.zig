@@ -248,7 +248,7 @@ pub const Dx12State = struct {
     pub fn present(dx12: *Dx12State) void {
         dx12.frame_fence_counter += 1;
 
-        hrPanicOnFail(dx12.swap_chain.Present(1, .{}));
+        hrPanicOnFail(dx12.swap_chain.Present(0, .{}));
         hrPanicOnFail(dx12.command_queue.Signal(dx12.frame_fence, dx12.frame_fence_counter));
 
         const gpu_frame_counter = dx12.frame_fence.GetCompletedValue();
