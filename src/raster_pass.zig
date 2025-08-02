@@ -5,6 +5,7 @@ const RasterResources = @import("raster_resources.zig").RasterResources;
 const Geometry = @import("geometry.zig").Geometry;
 const Dx12State = @import("dx12_state.zig").Dx12State;
 const mesh_data = @import("mesh_data.zig");
+const std = @import("std");
 
 pub const RasterPass = struct {
     root_signature: *d3d12.IRootSignature,
@@ -28,6 +29,8 @@ pub const RasterPass = struct {
         pso_desc.NumRenderTargets = 1;
         pso_desc.RTVFormats[0] = .R8G8B8A8_UNORM;
         pso_desc.DSVFormat = .D32_FLOAT;
+        pso_desc.SampleMask = std.math.maxInt(u32);
+        pso_desc.SampleDesc = .{ .Count = 4, .Quality = 0 };
 
         var root_signature: *d3d12.IRootSignature = undefined;
         hrPanicOnFail(dx12.device.CreateRootSignature(0, pso_desc.VS.pShaderBytecode.?, pso_desc.VS.BytecodeLength, &d3d12.IID_IRootSignature, @ptrCast(&root_signature)));

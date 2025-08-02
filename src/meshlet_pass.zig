@@ -4,6 +4,7 @@ const hrPanicOnFail = zwindows.hrPanicOnFail;
 const MeshletResources = @import("meshlet_resources.zig").MeshletResources;
 const Geometry = @import("geometry.zig").Geometry;
 const Dx12State = @import("dx12_state.zig").Dx12State;
+const std = @import("std");
 
 pub const MeshletPass = struct {
     root_signature: *d3d12.IRootSignature,
@@ -21,6 +22,8 @@ pub const MeshletPass = struct {
         mesh_state_desc.NumRenderTargets = 1;
         mesh_state_desc.MS = .{ .pShaderBytecode = ms_cso, .BytecodeLength = ms_cso.len };
         mesh_state_desc.PS = .{ .pShaderBytecode = ps_cso, .BytecodeLength = ps_cso.len };
+        mesh_state_desc.SampleMask = std.math.maxInt(u32);
+        mesh_state_desc.SampleDesc = .{ .Count = 4, .Quality = 0 };
 
         var stream = d3d12.PIPELINE_MESH_STATE_STREAM.init(mesh_state_desc);
 

@@ -55,6 +55,9 @@ pub const Dx12State = struct {
     swap_chain: *dxgi.ISwapChain3,
     swap_chain_textures: [num_frames]*d3d12.IResource,
 
+    msaa_resource: *d3d12.IResource,
+    msaa_rtv: d3d12.CPU_DESCRIPTOR_HANDLE,
+
     dsv_heap: *d3d12.IDescriptorHeap,
     depth_texture: *d3d12.IResource,
     depth_heap_handle: d3d12.CPU_DESCRIPTOR_HANDLE,
@@ -145,7 +148,7 @@ pub const Dx12State = struct {
         var dsv_heap: *d3d12.IDescriptorHeap = undefined;
         hrPanicOnFail(device.CreateDescriptorHeap(&.{
             .Type = .DSV,
-            .NumDescriptors = 16,
+            .NumDescriptors = 1,
             .Flags = .{},
             .NodeMask = 0,
         }, &d3d12.IID_IDescriptorHeap, @ptrCast(&dsv_heap)));
@@ -153,11 +156,13 @@ pub const Dx12State = struct {
         const depth_heap_handle = dsv_heap.GetCPUDescriptorHandleForHeapStart();
 
         var depth_texture: ?*d3d12.IResource = null;
-        const depth_desc = d3d12.RESOURCE_DESC.initDepthBuffer(.R32_TYPELESS, width, height);
+        var depth_desc = d3d12.RESOURCE_DESC.initDepthBuffer(.D32_FLOAT, width, height);
+        depth_desc.SampleDesc.Count = 4;
+        depth_desc.SampleDesc.Quality = 0;
         const heap_props = d3d12.HEAP_PROPERTIES.initType(.DEFAULT);
         hrPanicOnFail(device.CreateCommittedResource(&heap_props, d3d12.HEAP_FLAGS{}, &depth_desc, .{ .DEPTH_WRITE = true }, &d3d12.CLEAR_VALUE.initDepthStencil(.D32_FLOAT, 1.0, 0), &d3d12.IID_IResource, @ptrCast(&depth_texture)));
 
-        const dsv_desc = d3d12.DEPTH_STENCIL_VIEW_DESC{ .Format = .D32_FLOAT, .ViewDimension = .TEXTURE2D, .Flags = .{}, .u = .{ .Texture2D = .{ .MipSlice = 0 } } };
+        const dsv_desc = d3d12.DEPTH_STENCIL_VIEW_DESC{ .Format = .D32_FLOAT, .ViewDimension = .TEXTURE2DMS, .Flags = .{}, .u = .{ .Texture2D = .{ .MipSlice = 0 } } };
         device.CreateDepthStencilView(depth_texture, &dsv_desc, depth_heap_handle);
 
         var rtv_heap: *d3d12.IDescriptorHeap = undefined;
@@ -175,6 +180,31 @@ pub const Dx12State = struct {
         }
 
         std.log.info("RTV heap created", .{});
+
+        var msaa_resource: *d3d12.IResource = undefined;
+        const msaa_rtv: d3d12.CPU_DESCRIPTOR_HANDLE = rtv_heap.GetCPUDescriptorHandleForHeapStart();
+        {
+            const msaa_resource_desc = d3d12.RESOURCE_DESC{
+                .Dimension = .TEXTURE2D,
+                .Width = width,
+                .Height = height,
+                .DepthOrArraySize = 1,
+                .MipLevels = 1,
+                .Format = rtv_format,
+                .SampleDesc = .{ .Count = 4, .Quality = 0 },
+                .Layout = .UNKNOWN,
+                .Flags = .{ .ALLOW_RENDER_TARGET = true },
+                .Alignment = 0,
+            };
+
+            const clear_value = d3d12.CLEAR_VALUE{
+                .Format = rtv_format,
+                .u = .{ .Color = .{ 0.0, 0.0, 0.0, 1.0 } },
+            };
+            hrPanicOnFail(device.CreateCommittedResource(&d3d12.HEAP_PROPERTIES.initType(.DEFAULT), .{}, &msaa_resource_desc, .COMMON, &clear_value, &d3d12.IID_IResource, @ptrCast(&msaa_resource)));
+
+            device.CreateRenderTargetView(msaa_resource, null, msaa_rtv);
+        }
 
         var frame_fence: *d3d12.IFence = undefined;
         hrPanicOnFail(device.CreateFence(0, .{}, &d3d12.IID_IFence, @ptrCast(&frame_fence)));
@@ -215,6 +245,8 @@ pub const Dx12State = struct {
             .command_queue = command_queue,
             .swap_chain = swap_chain,
             .swap_chain_textures = swap_chain_textures,
+            .msaa_resource = msaa_resource,
+            .msaa_rtv = msaa_rtv,
             .dsv_heap = dsv_heap,
             .depth_texture = depth_texture.?,
             .depth_heap_handle = depth_heap_handle,

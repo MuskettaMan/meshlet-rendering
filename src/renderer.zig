@@ -172,18 +172,18 @@ pub const Renderer = struct {
         }});
 
         const back_buffer_index = self.dx12.swap_chain.GetCurrentBackBufferIndex();
-        const back_buffer_descriptor = d3d12.CPU_DESCRIPTOR_HANDLE{ .ptr = self.dx12.rtv_heap_start.ptr + back_buffer_index * self.dx12.device.GetDescriptorHandleIncrementSize(.RTV) };
+        //const back_buffer_descriptor = d3d12.CPU_DESCRIPTOR_HANDLE{ .ptr = self.dx12.rtv_heap_start.ptr + back_buffer_index * self.dx12.device.GetDescriptorHandleIncrementSize(.RTV) };
 
         command_list.ResourceBarrier(1, &.{.{ .Type = .TRANSITION, .Flags = .{}, .u = .{ .Transition = .{
-            .pResource = self.dx12.swap_chain_textures[back_buffer_index],
+            .pResource = self.dx12.msaa_resource,
             .Subresource = d3d12.RESOURCE_BARRIER_ALL_SUBRESOURCES,
             .StateBefore = d3d12.RESOURCE_STATES.PRESENT,
             .StateAfter = .{ .RENDER_TARGET = true },
         } } }});
 
-        command_list.OMSetRenderTargets(1, &.{back_buffer_descriptor}, windows.TRUE, &self.dx12.depth_heap_handle);
+        command_list.OMSetRenderTargets(1, &.{self.dx12.msaa_rtv}, windows.TRUE, &self.dx12.depth_heap_handle);
         command_list.ClearDepthStencilView(self.dx12.depth_heap_handle, .{ .DEPTH = true }, 1.0, 0, 0, null);
-        command_list.ClearRenderTargetView(back_buffer_descriptor, &.{ 0.2, 0.2, 0.8, 1.0 }, 0, null);
+        command_list.ClearRenderTargetView(self.dx12.msaa_rtv, &.{ 0.2, 0.2, 0.8, 1.0 }, 0, null);
 
         zgui.backend.newFrame(@intCast(self.width), @intCast(self.height));
 
@@ -268,11 +268,27 @@ pub const Renderer = struct {
         command_list.SetDescriptorHeaps(1, &zgui_heaps);
         zgui.backend.draw(command_list);
 
-        command_list.ResourceBarrier(1, &.{.{ .Type = .TRANSITION, .Flags = .{}, .u = .{ .Transition = .{
-            .pResource = self.dx12.swap_chain_textures[back_buffer_index],
+        command_list.ResourceBarrier(1, &.{ .{ .Type = .TRANSITION, .Flags = .{}, .u = .{ .Transition = .{
+            .pResource = self.dx12.msaa_resource,
             .Subresource = d3d12.RESOURCE_BARRIER_ALL_SUBRESOURCES,
             .StateBefore = .{ .RENDER_TARGET = true },
-            .StateAfter = d3d12.RESOURCE_STATES.PRESENT,
+            .StateAfter = .{ .RESOLVE_SOURCE = true },
+        } } }});
+
+        command_list.ResourceBarrier(1, &.{ .{ .Type = .TRANSITION, .Flags = .{}, .u = .{ .Transition = .{
+            .pResource = self.dx12.swap_chain_textures[back_buffer_index],
+            .Subresource = d3d12.RESOURCE_BARRIER_ALL_SUBRESOURCES,
+            .StateBefore = .PRESENT,
+            .StateAfter = .{ .RESOLVE_DEST = true },
+        } } }});
+
+        command_list.ResolveSubresource(self.dx12.swap_chain_textures[back_buffer_index], 0, self.dx12.msaa_resource, 0, .R8G8B8A8_UNORM);
+
+        command_list.ResourceBarrier(1, &.{ .{ .Type = .TRANSITION, .Flags = .{}, .u = .{ .Transition = .{
+            .pResource = self.dx12.swap_chain_textures[back_buffer_index],
+            .Subresource = d3d12.RESOURCE_BARRIER_ALL_SUBRESOURCES,
+            .StateBefore = .{ .RESOLVE_DEST = true },
+            .StateAfter = .PRESENT,
         } } }});
 
         hrPanicOnFail(command_list.Close());
