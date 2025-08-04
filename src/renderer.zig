@@ -183,7 +183,7 @@ pub const Renderer = struct {
 
         command_list.OMSetRenderTargets(1, &.{self.dx12.msaa_rtv}, windows.TRUE, &self.dx12.depth_heap_handle);
         command_list.ClearDepthStencilView(self.dx12.depth_heap_handle, .{ .DEPTH = true }, 1.0, 0, 0, null);
-        command_list.ClearRenderTargetView(self.dx12.msaa_rtv, &.{ 0.2, 0.2, 0.8, 1.0 }, 0, null);
+        command_list.ClearRenderTargetView(self.dx12.msaa_rtv, &.{ 0.0, 0.0, 0.0, 1.0 }, 0, null);
 
         zgui.backend.newFrame(@intCast(self.width), @intCast(self.height));
 
@@ -268,14 +268,14 @@ pub const Renderer = struct {
         command_list.SetDescriptorHeaps(1, &zgui_heaps);
         zgui.backend.draw(command_list);
 
-        command_list.ResourceBarrier(1, &.{ .{ .Type = .TRANSITION, .Flags = .{}, .u = .{ .Transition = .{
+        command_list.ResourceBarrier(1, &.{.{ .Type = .TRANSITION, .Flags = .{}, .u = .{ .Transition = .{
             .pResource = self.dx12.msaa_resource,
             .Subresource = d3d12.RESOURCE_BARRIER_ALL_SUBRESOURCES,
             .StateBefore = .{ .RENDER_TARGET = true },
             .StateAfter = .{ .RESOLVE_SOURCE = true },
         } } }});
 
-        command_list.ResourceBarrier(1, &.{ .{ .Type = .TRANSITION, .Flags = .{}, .u = .{ .Transition = .{
+        command_list.ResourceBarrier(1, &.{.{ .Type = .TRANSITION, .Flags = .{}, .u = .{ .Transition = .{
             .pResource = self.dx12.swap_chain_textures[back_buffer_index],
             .Subresource = d3d12.RESOURCE_BARRIER_ALL_SUBRESOURCES,
             .StateBefore = .PRESENT,
@@ -284,7 +284,7 @@ pub const Renderer = struct {
 
         command_list.ResolveSubresource(self.dx12.swap_chain_textures[back_buffer_index], 0, self.dx12.msaa_resource, 0, .R8G8B8A8_UNORM);
 
-        command_list.ResourceBarrier(1, &.{ .{ .Type = .TRANSITION, .Flags = .{}, .u = .{ .Transition = .{
+        command_list.ResourceBarrier(1, &.{.{ .Type = .TRANSITION, .Flags = .{}, .u = .{ .Transition = .{
             .pResource = self.dx12.swap_chain_textures[back_buffer_index],
             .Subresource = d3d12.RESOURCE_BARRIER_ALL_SUBRESOURCES,
             .StateBefore = .{ .RESOLVE_DEST = true },

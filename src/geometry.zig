@@ -82,6 +82,7 @@ pub const Geometry = struct {
         const mesh = Mesh{ .start = @intCast(self.primitives.items.len), .length = @intCast(cpuMesh.primitives.items.len) };
         try self.meshes.append(mesh);
 
+        // Used for offset into GPU buffer (where to start writing)
         const total_vertex_count: u32 = self.total_vertex_count;
         const total_index_count: u32 = self.total_index_count;
         const total_meshlet_count: u32 = self.total_meshlet_count;
@@ -89,16 +90,23 @@ pub const Geometry = struct {
 
         for (cpuMesh.primitives.items) |*primitive| {
             try mesh_data.loadOptimizedMesh(allocator, primitive, &self.primitives, &all_vertices, &all_indices, &all_meshlets, &all_meshlets_data);
-            const prim = &self.primitives.items[self.meshes.items.len - 1];
+
+            const prim = &self.primitives.items[self.primitives.items.len - 1];
+
             prim.vertex_offset += self.total_vertex_count;
             prim.index_offset += self.total_index_count;
             prim.meshlet_offset += self.total_meshlet_count;
-
-            self.total_vertex_count += @intCast(all_vertices.items.len);
-            self.total_index_count += @intCast(all_indices.items.len);
-            self.total_meshlet_count += @intCast(all_meshlets.items.len);
-            self.total_meshlet_data_count += @intCast(all_meshlets_data.items.len);
         }
+
+        self.total_vertex_count += @intCast(all_vertices.items.len);
+        self.total_index_count += @intCast(all_indices.items.len);
+        self.total_meshlet_count += @intCast(all_meshlets.items.len);
+        self.total_meshlet_data_count += @intCast(all_meshlets_data.items.len);
+
+        std.debug.assert(@sizeOf(mesh_data.Vertex) * self.total_vertex_count < VERTEX_BUFFER_SIZE);
+        std.debug.assert(@sizeOf(u32) * self.total_index_count < INDEX_BUFFER_SIZE);
+        std.debug.assert(@sizeOf(mesh_data.Meshlet) * self.total_meshlet_count < MESHLET_BUFFER_SIZE);
+        std.debug.assert(@sizeOf(u32) * self.total_meshlet_data_count < MESHLET_DATA_BUFFER_SIZE);
 
         dx12_state.copyBuffer(mesh_data.Vertex, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "VertexUploadBuffer") catch unreachable, &all_vertices, &self.vertex_buffer_resource, @sizeOf(mesh_data.Vertex) * total_vertex_count, self.dx12);
         dx12_state.copyBuffer(u32, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "IndexUploadBuffer") catch unreachable, &all_indices, &self.index_buffer_resource, @sizeOf(u32) * total_index_count, self.dx12);
