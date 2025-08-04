@@ -109,6 +109,13 @@ pub const Renderer = struct {
         hrPanicOnFail(dx12.command_allocators[0].Reset());
         hrPanicOnFail(dx12.command_list.Reset(dx12.command_allocators[0], null));
 
+        dx12.command_list.ResourceBarrier(1, &.{.{ .Type = .TRANSITION, .Flags = .{}, .u = .{ .Transition = .{
+            .pResource = dx12.msaa_resource,
+            .Subresource = d3d12.RESOURCE_BARRIER_ALL_SUBRESOURCES,
+            .StateBefore = .COMMON,
+            .StateAfter = .{ .RESOLVE_SOURCE = true },
+        } } }});
+        
         return Renderer{
             .dx12 = dx12,
             .meshlet_pass = meshlet_pass,
@@ -177,7 +184,7 @@ pub const Renderer = struct {
         command_list.ResourceBarrier(1, &.{.{ .Type = .TRANSITION, .Flags = .{}, .u = .{ .Transition = .{
             .pResource = self.dx12.msaa_resource,
             .Subresource = d3d12.RESOURCE_BARRIER_ALL_SUBRESOURCES,
-            .StateBefore = d3d12.RESOURCE_STATES.PRESENT,
+            .StateBefore = .{ .RESOLVE_SOURCE = true },
             .StateAfter = .{ .RENDER_TARGET = true },
         } } }});
 
@@ -264,10 +271,6 @@ pub const Renderer = struct {
             }
         }
 
-        const zgui_heaps = [_]*d3d12.IDescriptorHeap{self.zgui_heap.heap};
-        command_list.SetDescriptorHeaps(1, &zgui_heaps);
-        zgui.backend.draw(command_list);
-
         command_list.ResourceBarrier(1, &.{.{ .Type = .TRANSITION, .Flags = .{}, .u = .{ .Transition = .{
             .pResource = self.dx12.msaa_resource,
             .Subresource = d3d12.RESOURCE_BARRIER_ALL_SUBRESOURCES,
@@ -288,6 +291,20 @@ pub const Renderer = struct {
             .pResource = self.dx12.swap_chain_textures[back_buffer_index],
             .Subresource = d3d12.RESOURCE_BARRIER_ALL_SUBRESOURCES,
             .StateBefore = .{ .RESOLVE_DEST = true },
+            .StateAfter = .{ .RENDER_TARGET = true },
+        } } }});
+        
+        const back_buffer_descriptor = d3d12.CPU_DESCRIPTOR_HANDLE{ .ptr = self.dx12.rtv_heap_start.ptr + back_buffer_index * self.dx12.device.GetDescriptorHandleIncrementSize(.RTV) };
+        command_list.OMSetRenderTargets(1, &.{back_buffer_descriptor}, windows.TRUE, null);
+
+        const zgui_heaps = [_]*d3d12.IDescriptorHeap{self.zgui_heap.heap};
+        command_list.SetDescriptorHeaps(1, &zgui_heaps);
+        zgui.backend.draw(command_list);
+
+        command_list.ResourceBarrier(1, &.{.{ .Type = .TRANSITION, .Flags = .{}, .u = .{ .Transition = .{
+            .pResource = self.dx12.swap_chain_textures[back_buffer_index],
+            .Subresource = d3d12.RESOURCE_BARRIER_ALL_SUBRESOURCES,
+            .StateBefore = .{ .RENDER_TARGET = true },
             .StateAfter = .PRESENT,
         } } }});
 

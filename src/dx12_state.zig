@@ -6,6 +6,7 @@ const dxgi = zwindows.dxgi;
 const d3d12 = zwindows.d3d12;
 const d3d12d = zwindows.d3d12d;
 const hrPanicOnFail = zwindows.hrPanicOnFail;
+const W = std.unicode.utf8ToUtf16LeStringLiteral;
 
 pub const Descriptor = struct { index: u32, cpu_handle: d3d12.CPU_DESCRIPTOR_HANDLE, gpu_handle: d3d12.GPU_DESCRIPTOR_HANDLE };
 
@@ -182,7 +183,7 @@ pub const Dx12State = struct {
         std.log.info("RTV heap created", .{});
 
         var msaa_resource: *d3d12.IResource = undefined;
-        const msaa_rtv: d3d12.CPU_DESCRIPTOR_HANDLE = rtv_heap.GetCPUDescriptorHandleForHeapStart();
+        const msaa_rtv: d3d12.CPU_DESCRIPTOR_HANDLE = .{ .ptr = rtv_heap_start.ptr + swap_chain_textures.len * device.GetDescriptorHandleIncrementSize(.RTV) };
         {
             const msaa_resource_desc = d3d12.RESOURCE_DESC{
                 .Dimension = .TEXTURE2D,
@@ -202,6 +203,8 @@ pub const Dx12State = struct {
                 .u = .{ .Color = .{ 0.0, 0.0, 0.0, 1.0 } },
             };
             hrPanicOnFail(device.CreateCommittedResource(&d3d12.HEAP_PROPERTIES.initType(.DEFAULT), .{}, &msaa_resource_desc, .COMMON, &clear_value, &d3d12.IID_IResource, @ptrCast(&msaa_resource)));
+
+            _ = msaa_resource.SetName(W("MSAA RTV"));
 
             device.CreateRenderTargetView(msaa_resource, null, msaa_rtv);
         }

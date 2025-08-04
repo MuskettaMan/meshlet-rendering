@@ -8,6 +8,7 @@ const hrPanicOnFail = zwindows.hrPanicOnFail;
 const zmesh = @import("zmesh");
 const zcgltf = zmesh.io.zcgltf;
 const ModelLoader = @import("model_loader.zig");
+const W = std.unicode.utf8ToUtf16LeStringLiteral;
 
 const KB = 1024;
 const MB = KB * 1024;
@@ -108,10 +109,10 @@ pub const Geometry = struct {
         std.debug.assert(@sizeOf(mesh_data.Meshlet) * self.total_meshlet_count < MESHLET_BUFFER_SIZE);
         std.debug.assert(@sizeOf(u32) * self.total_meshlet_data_count < MESHLET_DATA_BUFFER_SIZE);
 
-        dx12_state.copyBuffer(mesh_data.Vertex, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "VertexUploadBuffer") catch unreachable, &all_vertices, &self.vertex_buffer_resource, @sizeOf(mesh_data.Vertex) * total_vertex_count, self.dx12);
-        dx12_state.copyBuffer(u32, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "IndexUploadBuffer") catch unreachable, &all_indices, &self.index_buffer_resource, @sizeOf(u32) * total_index_count, self.dx12);
-        dx12_state.copyBuffer(mesh_data.Meshlet, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "MeshletUploadBuffer") catch unreachable, &all_meshlets, &self.meshlet_buffer_resource, @sizeOf(mesh_data.Meshlet) * total_meshlet_count, self.dx12);
-        dx12_state.copyBuffer(u32, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "MeshletDataUploadBuffer") catch unreachable, &all_meshlets_data, &self.meshlet_data_buffer_resource, @sizeOf(u32) * total_meshlet_data_count, self.dx12);
+        dx12_state.copyBuffer(mesh_data.Vertex, W("VertexUploadBuffer"), &all_vertices, &self.vertex_buffer_resource, @sizeOf(mesh_data.Vertex) * total_vertex_count, self.dx12);
+        dx12_state.copyBuffer(u32, W("IndexUploadBuffer"), &all_indices, &self.index_buffer_resource, @sizeOf(u32) * total_index_count, self.dx12);
+        dx12_state.copyBuffer(mesh_data.Meshlet, W("MeshletUploadBuffer"), &all_meshlets, &self.meshlet_buffer_resource, @sizeOf(mesh_data.Meshlet) * total_meshlet_count, self.dx12);
+        dx12_state.copyBuffer(u32, W("MeshletDataUploadBuffer"), &all_meshlets_data, &self.meshlet_data_buffer_resource, @sizeOf(u32) * total_meshlet_data_count, self.dx12);
         return @intCast(self.meshes.items.len - 1);
     }
 };
