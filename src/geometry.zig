@@ -14,10 +14,10 @@ const KB = 1024;
 const MB = KB * 1024;
 const GB = MB * 1024;
 
-const VERTEX_BUFFER_SIZE = 16 * MB;
-const INDEX_BUFFER_SIZE = 16 * MB;
-const MESHLET_BUFFER_SIZE = 2 * MB;
-const MESHLET_DATA_BUFFER_SIZE = 8 * MB;
+const VERTEX_BUFFER_SIZE = 128 * MB;
+const INDEX_BUFFER_SIZE = 128 * MB;
+const MESHLET_BUFFER_SIZE = 16 * MB;
+const MESHLET_DATA_BUFFER_SIZE = 32 * MB;
 
 pub const MeshHandle = u32;
 
@@ -97,6 +97,10 @@ pub const Geometry = struct {
             prim.vertex_offset += self.total_vertex_count;
             prim.index_offset += self.total_index_count;
             prim.meshlet_offset += self.total_meshlet_count;
+        }
+
+        for (all_meshlets.items) |*meshlet| {
+            meshlet.data_offset += total_meshlet_data_count;
         }
 
         self.total_vertex_count += @intCast(all_vertices.items.len);

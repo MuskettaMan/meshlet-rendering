@@ -1,9 +1,9 @@
 #define ROOT_SIGNATURE \
     "RootFlags(ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT), " \
     "CBV(b0), " \
-    "CBV(b1), " \
+    "SRV(t1), " \
     "RootConstants(b2, num32BitConstants = 5), " \
-    "DescriptorTable(SRV(t0, numDescriptors = 4))"
+    "DescriptorTable(SRV(t2, numDescriptors = 4))"
 
 struct RootConst {
     uint vertex_offset;
@@ -23,12 +23,6 @@ struct Instance {
     float4x4 model;
 };
 
-#define INSTANCE_COUNT 64
-
-struct Instances {
-    Instance data[INSTANCE_COUNT];
-};
-
 struct InputVertex {
     float3 position : POSITION;
     float3 normal: NORMAL;
@@ -42,13 +36,13 @@ struct OutputVertex {
 };
 
 ConstantBuffer<Camera> camera : register(b0);
-ConstantBuffer<Instances> instances : register(b1);
 ConstantBuffer<RootConst> root_const : register(b2);
 
-StructuredBuffer<InputVertex> vertices : register(t0);
-StructuredBuffer<uint32_t> indices : register(t1);
-StructuredBuffer<uint64_t> meshlets : register(t2);
-Buffer<uint32_t> meshlets_data : register(t3);
+StructuredBuffer<InputVertex> vertices : register(t2);
+StructuredBuffer<uint32_t> indices : register(t3);
+StructuredBuffer<uint64_t> meshlets : register(t4);
+Buffer<uint32_t> meshlets_data : register(t5);
+StructuredBuffer<Instance> instances : register(t1);
 
 #define NUM_THREADS 32
 #define MAX_NUM_VERTICES 64
@@ -73,7 +67,7 @@ OutputVertex vsMain(InputVertex input) {
     float4 position = float4(input.position, 1.0);
     float3 normal = input.normal;
 
-    float4 worldPosition = mul(position, instances.data[root_const.instance_id].model);
+    float4 worldPosition = mul(position, instances[root_const.instance_id].model);
 
     position = mul(worldPosition, vp);
 
@@ -121,7 +115,7 @@ void msMain(
         float4 position = float4(vertices[vertex_index].position, 1.0);
         float3 normal = vertices[vertex_index].normal;
 
-        float4 worldPosition = mul(position, instances.data[root_const.instance_id].model);
+        float4 worldPosition = mul(position, instances[root_const.instance_id].model);
 
         position = mul(worldPosition, vp);
 

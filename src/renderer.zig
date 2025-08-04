@@ -37,7 +37,7 @@ const RootConst = extern struct {
     primitive_id: u32,
 };
 
-const INSTANCE_COUNT = 64;
+const INSTANCE_COUNT = 4096;
 
 pub const Renderer = struct {
     dx12: *Dx12State,
@@ -94,7 +94,7 @@ pub const Renderer = struct {
 
         var camera_resource = dx12_state.createResource(Camera, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "CameraBuffer") catch unreachable, .UPLOAD, dx12.device, true);
 
-        var instances_resource = dx12_state.createResource([INSTANCE_COUNT]zmath.Mat, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "InstanceBuffer") catch unreachable, .UPLOAD, dx12.device, true);
+        const instances_resource = dx12_state.createResource([INSTANCE_COUNT]zmath.Mat, std.unicode.utf8ToUtf16LeAllocZ(arenaAllocator, "InstanceBuffer") catch unreachable, .UPLOAD, dx12.device, true);
 
         var default_heap = CbvSrvHeap.init(16, dx12.device);
 
@@ -103,8 +103,8 @@ pub const Renderer = struct {
         dx12.device.CreateConstantBufferView(&camera_cbv_desc, camera_descriptor.cpu_handle);
 
         const instance_descriptor = default_heap.allocate();
-        const instance_cbv_desc: d3d12.CONSTANT_BUFFER_VIEW_DESC = .{ .BufferLocation = instances_resource.resource.GetGPUVirtualAddress(), .SizeInBytes = @intCast(instances_resource.buffer_size) };
-        dx12.device.CreateConstantBufferView(&instance_cbv_desc, instance_descriptor.cpu_handle);
+        const instance_srv_desc = d3d12.SHADER_RESOURCE_VIEW_DESC.initStructuredBuffer(0, INSTANCE_COUNT, @sizeOf(Instance));
+        dx12.device.CreateShaderResourceView(instances_resource.resource, &instance_srv_desc, instance_descriptor.cpu_handle);
 
         hrPanicOnFail(dx12.command_allocators[0].Reset());
         hrPanicOnFail(dx12.command_list.Reset(dx12.command_allocators[0], null));
@@ -115,7 +115,7 @@ pub const Renderer = struct {
             .StateBefore = .COMMON,
             .StateAfter = .{ .RESOLVE_SOURCE = true },
         } } }});
-        
+
         return Renderer{
             .dx12 = dx12,
             .meshlet_pass = meshlet_pass,
@@ -236,7 +236,7 @@ pub const Renderer = struct {
         }
 
         command_list.SetGraphicsRootConstantBufferView(0, self.camera_resource.resource.GetGPUVirtualAddress());
-        command_list.SetGraphicsRootConstantBufferView(1, self.instances_resource.resource.GetGPUVirtualAddress());
+        command_list.SetGraphicsRootShaderResourceView(1, self.instances_resource.resource.GetGPUVirtualAddress());
 
         var primitive_id: u32 = 0;
         for (self.draws.items, 0..) |*draw, i| {
@@ -293,7 +293,7 @@ pub const Renderer = struct {
             .StateBefore = .{ .RESOLVE_DEST = true },
             .StateAfter = .{ .RENDER_TARGET = true },
         } } }});
-        
+
         const back_buffer_descriptor = d3d12.CPU_DESCRIPTOR_HANDLE{ .ptr = self.dx12.rtv_heap_start.ptr + back_buffer_index * self.dx12.device.GetDescriptorHandleIncrementSize(.RTV) };
         command_list.OMSetRenderTargets(1, &.{back_buffer_descriptor}, windows.TRUE, null);
 

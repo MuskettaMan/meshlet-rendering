@@ -14,7 +14,7 @@ pub const MeshletResources = struct {
     meshlet_data_buffer_descriptor: Descriptor,
 
     pub fn init(geometry: *const Geometry, dx12: *const Dx12State) MeshletResources {
-        var heap = CbvSrvHeap.init(16, dx12.device);
+        var heap = CbvSrvHeap.init(4, dx12.device);
 
         const vertex_srv_desc = d3d12.SHADER_RESOURCE_VIEW_DESC.initStructuredBuffer(0, @intCast(geometry.vertex_buffer_resource.buffer_size / @sizeOf(mesh_data.Vertex)), @sizeOf(mesh_data.Vertex));
         const vertex_buffer_descriptor = heap.allocate();
